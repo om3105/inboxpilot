@@ -2,7 +2,7 @@
 
 > **Live Demo:** `https://inboxpilot-demo.onrender.com` | **Demo Token:** `demo-secret-token-2025` *(Header: `X-Demo-Token`)* | **Interactive Docs:** `https://inboxpilot-demo.onrender.com/docs`
 
-[![CI & Evals](https://github.com/your-username/inboxpilot/actions/workflows/evals.yml/badge.svg)](https://github.com/your-username/inboxpilot/actions)
+[![CI & Evals](https://github.com/om3105/inboxpilot/actions/workflows/evals.yml/badge.svg)](https://github.com/om3105/inboxpilot/actions)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-1.2.14-orange.svg)](https://langchain-ai.github.io/langgraph/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.143.0-009688.svg)](https://fastapi.tiangolo.com)
