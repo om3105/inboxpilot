@@ -20,7 +20,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, HTTPException, Request, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -113,6 +113,13 @@ class ProcessResponse(BaseModel):
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
+
+@app.get("/", response_class=HTMLResponse, tags=["Dashboard"])
+async def dashboard():
+    """Interactive dark-mode web user interface for demoing InboxPilot."""
+    from app.ui import HTML_CONTENT
+    return HTML_CONTENT
 
 
 @app.get("/health", tags=["System"])
