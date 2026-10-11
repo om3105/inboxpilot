@@ -1,0 +1,13 @@
+From: rohan.mehta@acme.dev
+To: it-support@acme.dev
+Subject: Cannot access finance dashboard (Ticket TKT-302)
+Date: Wed, 16 Oct 2024 11:00:00 +0000
+
+Hi IT Support,
+
+Following up on ticket TKT-302. I still get a 403 Forbidden error when trying to access the monthly finance dashboard since yesterday's release.
+This is blocking the month-end closing, so please look into this urgently.
+
+Thanks,
+Rohan Mehta
+Finance Manager

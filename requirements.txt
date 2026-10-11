@@ -1,0 +1,33 @@
+# Core web framework
+fastapi==0.143.0
+uvicorn[standard]==0.54.0
+pydantic==2.14.0
+pydantic-settings==2.15.0
+
+# LLM Orchestration & LangGraph
+langgraph==1.2.14
+langchain-core==1.6.9
+langchain-google-genai==4.4.1
+langgraph-checkpoint-mongodb==0.5.1
+
+# Database
+motor==3.7.1
+pymongo==4.18.3
+
+# Document parsing
+mail-parser==4.8.0
+pdfplumber==0.11.10
+
+# Observability
+langfuse==4.17.0
+
+# Rate limiting
+slowapi==0.1.10
+
+# Testing
+pytest==9.1.1
+pytest-asyncio==1.4.0
+httpx==0.28.1
+
+# Environment
+python-dotenv==1.2.4
