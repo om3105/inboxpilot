@@ -126,3 +126,9 @@ async def test_transient_error_is_retried_on_same_provider(provider, monkeypatch
     result = await LLMProvider().extract_structured(TEXT)
     assert result.employee_id == "EMP001"
     assert llm_module.FALLBACK_COUNTS["extract"] == 0
+
+
+def test_draft_html_is_converted_to_plain_text():
+    from app.llm import _to_plain_text
+    assert _to_plain_text("Dear Aarav,<br><br>Approved.<br/>Regards,<p>Ops</p>") == "Dear Aarav,\n\nApproved.\nRegards,\n\nOps"
+    assert _to_plain_text("No tags here.") == "No tags here."

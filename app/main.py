@@ -115,6 +115,7 @@ class ProcessResponse(BaseModel):
     tool_trace: list[str] = []
     requires_approval: bool = False
     message: str = ""
+    error: str | None = None
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -199,6 +200,7 @@ async def process_document(request: Request, payload: ProcessRequest):
         proposed_action=values.get("proposed_action"),
         draft_reply=values.get("draft_reply"),
         tool_trace=values.get("tool_trace", []),
+        error=values.get("error"),
         requires_approval=is_paused,
         message=(
             "Action requires human approval before execution."
@@ -238,6 +240,7 @@ async def get_run_status(run_id: str):
         proposed_action=values.get("proposed_action"),
         draft_reply=values.get("draft_reply"),
         tool_trace=values.get("tool_trace", []),
+        error=values.get("error"),
         requires_approval=is_paused,
         message="Awaiting approval" if is_paused else f"Run status: {current_status}",
     )
@@ -285,6 +288,7 @@ async def approve_run(request: Request, run_id: str):
         proposed_action=values.get("proposed_action"),
         draft_reply=values.get("draft_reply"),
         tool_trace=values.get("tool_trace", []),
+        error=values.get("error"),
         requires_approval=False,
         message=(
             "Proposed action approved and successfully executed."
@@ -336,6 +340,7 @@ async def reject_run(request: Request, run_id: str, payload: RejectRequest | Non
         proposed_action=values.get("proposed_action"),
         draft_reply=values.get("draft_reply"),
         tool_trace=values.get("tool_trace", []),
+        error=values.get("error"),
         requires_approval=False,
         message=f"Action rejected: {reason}",
     )

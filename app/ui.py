@@ -449,6 +449,22 @@ HTML_CONTENT = """<!DOCTYPE html>
       background: #fee2e2;
       color: #991b1b;
     }
+    .status-pill.review {
+      background: #e0e7ff;
+      color: #3730a3;
+    }
+    .error-banner {
+      display: none;
+      margin: 20px 32px 0;
+      padding: 10px 14px;
+      border: 1px solid #fecaca;
+      border-radius: 8px;
+      background: #fef2f2;
+      color: #991b1b;
+      font-size: 13px;
+    }
+    .error-banner.visible { display: block; }
+    .modal-actions button:disabled { opacity: 0.45; cursor: not-allowed; }
   </style>
 </head>
 <body>
@@ -468,7 +484,7 @@ HTML_CONTENT = """<!DOCTYPE html>
       <div class="nav-item" onclick="focusApproval()">
         <span>📝</span>
         <span>Pending Approvals</span>
-        <span class="nav-badge" id="navBadge">1</span>
+        <span class="nav-badge" id="navBadge">0</span>
       </div>
     </nav>
   </aside>
@@ -480,7 +496,7 @@ HTML_CONTENT = """<!DOCTYPE html>
       <div class="header-actions">
         <div class="token-box">
           <span style="color: #64748b;">Demo Token:</span>
-          <input type="text" id="demoToken" value="change-me-to-a-random-string">
+          <input type="password" id="demoToken" placeholder="Paste DEMO_TOKEN" autocomplete="off">
         </div>
         <div id="statusPill" class="status-pill awaiting" style="display: none;">
           <span style="width: 6px; height: 6px; border-radius: 50%; background: currentColor;"></span>
@@ -488,6 +504,8 @@ HTML_CONTENT = """<!DOCTYPE html>
         </div>
       </div>
     </header>
+
+    <div id="errorBanner" class="error-banner" role="alert"></div>
 
     <div class="content-grid">
       <!-- Inbound Column -->
@@ -538,25 +556,25 @@ Aarav Sharma</div>
           <table class="modal-table">
             <tr>
               <td class="col-label">Target Collection</td>
-              <td class="col-val" id="rowCollection">employees</td>
+              <td class="col-val" id="rowCollection">—</td>
             </tr>
             <tr>
               <td class="col-label">Action</td>
-              <td class="col-val" id="rowAction">deduct_leave</td>
+              <td class="col-val" id="rowAction">—</td>
             </tr>
             <tr>
               <td class="col-label">Mutation Payload</td>
-              <td class="col-val" id="rowPayload">{$inc: {leave_balance.casual: -2}}</td>
+              <td class="col-val" id="rowPayload">—</td>
             </tr>
             <tr>
-              <td class="col-label">New Balance</td>
-              <td class="col-val" id="rowBalance" style="color: #059669; font-weight: 600;">8 Days (Verified)</td>
+              <td class="col-label">Reason</td>
+              <td class="col-val" id="rowReason">Run the agent to see the proposed update.</td>
             </tr>
           </table>
 
           <div class="modal-actions">
-            <button class="btn-approve-clean" onclick="handleDecision('approve')">Approve & Execute</button>
-            <button class="btn-reject-clean" onclick="handleDecision('reject')">Reject</button>
+            <button id="approveBtn" class="btn-approve-clean" onclick="handleDecision('approve')" disabled>Approve & Execute</button>
+            <button id="rejectBtn" class="btn-reject-clean" onclick="handleDecision('reject')" disabled>Reject</button>
           </div>
         </div>
 
@@ -564,15 +582,10 @@ Aarav Sharma</div>
         <div class="draft-card">
           <div class="draft-header">
             <span class="card-title">Drafted Reply</span>
-            <span class="draft-recipient" id="draftTo">To: aarav.sharma@acme.dev</span>
+            <span class="draft-recipient" id="draftTo"></span>
           </div>
 
-          <div class="draft-body" id="draftBody">Hello Aarav Sharma,
-
-Your request for casual leave has been reviewed against current records. The proposed balance deduction has been queued for manager sign-off. You will receive a final confirmation once approved.
-
-Regards,
-InboxPilot Automated Ops</div>
+          <div class="draft-body" id="draftBody">Run the agent to generate a reply.</div>
         </div>
 
       </div>
@@ -618,31 +631,60 @@ InboxPilot Automated Ops</div>
       document.getElementById('displayBody').innerText = s.body.replace(/\\\\n/g, '\\n');
     }
 
+    function showError(msg) {
+      const el = document.getElementById('errorBanner');
+      el.innerText = msg;
+      el.classList.add('visible');
+    }
+
+    function clearError() {
+      document.getElementById('errorBanner').classList.remove('visible');
+    }
+
+    function setDecisionEnabled(enabled) {
+      document.getElementById('approveBtn').disabled = !enabled;
+      document.getElementById('rejectBtn').disabled = !enabled;
+    }
+
+    async function callApi(path, body) {
+      const token = document.getElementById('demoToken').value.trim();
+      if (!token) {
+        throw new Error('Paste the DEMO_TOKEN into the Demo Token box first.');
+      }
+      const res = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Demo-Token': token },
+        body: JSON.stringify(body)
+      });
+      let data = {};
+      try { data = await res.json(); } catch (_) { /* non-JSON error page */ }
+      if (!res.ok) {
+        const detail = (data && data.detail) ? (typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail)) : res.statusText;
+        if (res.status === 401) throw new Error('Token rejected (401): check the Demo Token matches DEMO_TOKEN on Render.');
+        if (res.status === 429) throw new Error('Rate limit reached (429): wait a minute and try again.');
+        throw new Error(`Request failed (${res.status}): ${detail}`);
+      }
+      return data;
+    }
+
     async function executeProcess() {
       const btn = document.getElementById('processBtn');
       btn.disabled = true;
       btn.innerText = 'Processing...';
+      clearError();
+      setDecisionEnabled(false);
 
       const email = document.getElementById('senderEmail').innerText;
       const subject = document.getElementById('displaySubject').innerText;
       const body = document.getElementById('displayBody').innerText;
-      const rawText = `From: ${email}\\nSubject: ${subject}\\n\\n${body}`;
-      const token = document.getElementById('demoToken').value.trim();
+      const rawText = `From: ${email}\nSubject: ${subject}\n\n${body}`;
 
       try {
-        const res = await fetch('/process', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Demo-Token': token
-          },
-          body: JSON.stringify({ raw_input: rawText, input_source: 'email' })
-        });
-        const data = await res.json();
+        const data = await callApi('/process', { raw_input: rawText, input_source: 'email' });
         currentRunId = data.run_id;
         renderState(data);
       } catch (err) {
-        alert('Error: ' + err.message);
+        showError(err.message);
       } finally {
         btn.disabled = false;
         btn.innerText = 'Run LangGraph Agent';
@@ -653,55 +695,61 @@ InboxPilot Automated Ops</div>
       const pill = document.getElementById('statusPill');
       const pillText = document.getElementById('statusPillText');
       const authModal = document.getElementById('authModal');
+      const act = data.proposed_action || {};
       pill.style.display = 'inline-flex';
 
-      if (data.status === 'awaiting_approval') {
-        pill.className = 'status-pill awaiting';
-        pillText.innerText = 'Awaiting Approval';
-        authModal.classList.add('visible');
+      document.getElementById('rowCollection').innerText = act.collection || '—';
+      document.getElementById('rowAction').innerText = act.action_type || '—';
+      document.getElementById('rowPayload').innerText =
+        act.update_payload && Object.keys(act.update_payload).length ? JSON.stringify(act.update_payload) : '—';
+      document.getElementById('rowReason').innerText = act.reason || data.error || data.message || '—';
 
-        const act = data.proposed_action || {};
-        document.getElementById('rowCollection').innerText = act.collection || 'employees';
-        document.getElementById('rowAction').innerText = act.action_type || 'deduct_leave';
-        document.getElementById('rowPayload').innerText = JSON.stringify(act.update_payload || {});
-        document.getElementById('rowBalance').innerText = '8 Days (Verified)';
-        document.getElementById('navBadge').innerText = '1';
-      } else if (data.status === 'completed') {
-        pill.className = 'status-pill completed';
-        pillText.innerText = 'Completed & Executed';
-        authModal.classList.remove('visible');
-        document.getElementById('navBadge').innerText = '0';
-      } else if (data.status === 'rejected') {
-        pill.className = 'status-pill rejected';
-        pillText.innerText = 'Rejected';
-        authModal.classList.remove('visible');
-        document.getElementById('navBadge').innerText = '0';
+      const states = {
+        awaiting_approval: ['awaiting', 'Awaiting Approval', '1'],
+        completed: ['completed', 'Completed & Executed', '0'],
+        rejected: ['rejected', 'Rejected', '0'],
+        needs_human_review: ['review', 'Needs Human Review', '0'],
+        failed: ['rejected', 'Execution Failed', '0'],
+      };
+      const [cls, label, badge] = states[data.status] || ['review', data.status || 'Unknown', '0'];
+      pill.className = `status-pill ${cls}`;
+      pillText.innerText = label;
+      document.getElementById('navBadge').innerText = badge;
+
+      const awaiting = data.status === 'awaiting_approval';
+      authModal.classList.toggle('visible', awaiting);
+      setDecisionEnabled(awaiting);
+
+      if (data.status === 'needs_human_review' && data.error) {
+        showError(`Routed to human review: ${data.error}`);
+      } else if (data.status === 'failed') {
+        showError(data.error || data.message || 'Execution failed.');
       }
 
-      if (data.draft_reply && data.draft_reply.body) {
-        document.getElementById('draftTo').innerText = `To: ${data.draft_reply.to}`;
-        document.getElementById('draftBody').innerText = data.draft_reply.body;
+      const draft = data.draft_reply;
+      if (draft && draft.body) {
+        document.getElementById('draftTo').innerText = `To: ${draft.to}`;
+        document.getElementById('draftBody').innerText = draft.body;
+      } else {
+        document.getElementById('draftTo').innerText = '';
+        document.getElementById('draftBody').innerText = 'No reply drafted for this run.';
       }
     }
 
     async function handleDecision(decision) {
-      if (!currentRunId) return;
-      const token = document.getElementById('demoToken').value.trim();
-      const endpoint = decision === 'approve' ? `/runs/${currentRunId}/approve` : `/runs/${currentRunId}/reject`;
-
+      if (!currentRunId) {
+        showError('Run the agent first.');
+        return;
+      }
+      clearError();
+      setDecisionEnabled(false);
+      const endpoint = `/runs/${currentRunId}/${decision === 'approve' ? 'approve' : 'reject'}`;
       try {
-        const res = await fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Demo-Token': token
-          },
-          body: decision === 'reject' ? JSON.stringify({ reason: 'Rejected by operator' }) : '{}'
-        });
-        const data = await res.json();
+        const data = await callApi(endpoint, decision === 'reject' ? { reason: 'Rejected by operator' } : {});
         renderState(data);
       } catch (err) {
-        alert('Action failed: ' + err.message);
+        showError(err.message);
+        setDecisionEnabled(true);
       }
     }
 
