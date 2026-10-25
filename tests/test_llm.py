@@ -59,7 +59,7 @@ async def test_gemini_success_does_not_call_nvidia(provider, monkeypatch):
     gemini_result = ExtractedEmail(document_type=DocumentType.INVOICE, invoice_number="INV-2024-001")
     _install(monkeypatch, {"gemini": gemini_result, "nvidia": nvidia_result}, calls)
 
-    result = await provider.extract_structured("Please pay invoice INV-2024-001 for $4,500.")
+    result = await provider.extract_structured("Please pay invoice INV-2024-001 for ₹4,500.")
     assert result.invoice_number == "INV-2024-001"
     assert calls == ["gemini"]
     assert provider.last_provider == "gemini"

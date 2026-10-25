@@ -620,7 +620,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
         return [`Deduct ${days} ${type} leave day${days === 1 ? "" : "s"} from ${who}`, `employees · ${act.filter_query ? Object.values(act.filter_query).join(", ") : ""}`];
       }
       case "mark_invoice_paid":
-        return [`Mark invoice ${ex.invoice_number || ""} as paid`, `${ex.vendor_name || "invoices"}${ex.amount ? " · $" + Number(ex.amount).toLocaleString() : ""}`];
+        return [`Mark invoice ${ex.invoice_number || ""} as paid`, `${ex.vendor_name || "invoices"}${ex.amount ? " · ₹" + Number(ex.amount).toLocaleString("en-IN") : ""}`];
       case "close_ticket":
         return [`Resolve ticket ${ex.ticket_id || ""}`, `tickets${ex.priority ? " · " + ex.priority + " priority" : ""}`];
       default:
@@ -684,7 +684,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
       Object.entries(FIELD_LABELS)
         .filter(([k]) => k !== "document_type" && ex[k] !== null && ex[k] !== undefined && ex[k] !== "")
         .filter(([k]) => k !== "issue_summary" || data.document_type === "support_ticket")
-        .map(([k, label]) => [label, k === "amount" ? "$" + Number(ex[k]).toLocaleString() : String(ex[k])])
+        .map(([k, label]) => [label, k === "amount" ? "₹" + Number(ex[k]).toLocaleString("en-IN") : String(ex[k])])
     );
     rows.forEach(([k, v]) => {
       const dt = document.createElement("dt"); dt.textContent = k;

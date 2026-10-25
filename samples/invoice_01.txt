@@ -7,7 +7,7 @@ Dear Accounts Payable,
 
 Please find attached the reminder for invoice INV-2024-001.
 Vendor: CloudStack Solutions
-Amount: $4,500.00 USD
+Amount: ₹4,500.00 INR
 Due Date: 2024-11-05
 Description: AWS Cloud Hosting and Managed Services - October 2024
 

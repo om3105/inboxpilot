@@ -34,7 +34,7 @@ logger = logging.getLogger("inboxpilot.llm")
 T = TypeVar("T", bound=BaseModel)
 
 # Bump when prompts or the LLM output schema change, so cached eval results are not reused.
-PROMPT_VERSION = 5
+PROMPT_VERSION = 6
 
 # Live calls where every provider failed and the heuristic was used (reported by evals).
 FALLBACK_COUNTS = {"extract": 0, "draft": 0}
@@ -259,7 +259,7 @@ class LLMProvider:
             "You are an enterprise operations assistant drafting a response email for InboxPilot.\n"
             "Write a polite, professional reply to the sender, grounded in this operational context. "
             "Reference the relevant employee, invoice, or ticket ID. Never promise an outcome that "
-            "still awaits human approval.\n"
+            "still awaits human approval. Amounts are in Indian rupees; write them with the ₹ symbol.\n"
             "Output only the email body as plain text: a greeting, two to four short paragraphs, and a "
             "sign-off from 'InboxPilot Operations'. No subject line, markdown, or HTML.\n\n"
             f"{json.dumps(context, indent=2, default=str)}"
@@ -323,7 +323,7 @@ class LLMProvider:
         inv_match = re.search(r"\b(INV-\d{4}-\d{3})\b", text, re.IGNORECASE)
         inv_num = inv_match.group(1).upper() if inv_match else None
 
-        amt_match = re.search(r"\$([0-9,]+(?:\.[0-9]{2})?)", text)
+        amt_match = re.search(r"(?:₹|\bRs\.?|\bINR|\$)\s?([0-9,]+(?:\.[0-9]{1,2})?)", text, re.IGNORECASE)
         amount = float(amt_match.group(1).replace(",", "")) if amt_match else None
 
         vendor = None

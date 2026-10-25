@@ -131,3 +131,18 @@ async def test_apply_update_no_match_reports_failure():
     res = await apply_update(action)
     assert res["success"] is False
     assert res["modified_count"] == 0
+
+
+def test_format_inr_uses_indian_grouping():
+    from agent.graph import format_inr
+    assert format_inr(4500.0) == "₹4,500"
+    assert format_inr(1200000) == "₹12,00,000"
+    assert format_inr(340.5) == "₹340.50"
+    assert format_inr(None) == "₹—"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("amount_text", ["₹4,500.00", "Rs. 4,500", "INR 4500", "$4,500"])
+async def test_offline_extractor_reads_rupee_amounts(amount_text):
+    extracted = await extract_fields(f"Invoice INV-2024-001 from CloudStack. Amount due: {amount_text}.")
+    assert extracted.amount == 4500.0
