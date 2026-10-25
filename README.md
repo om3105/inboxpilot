@@ -57,16 +57,37 @@ Evaluated against a curated 50-example labelled benchmark (`evals/dataset.json`)
 | **Decision Accuracy** | **100.0%** | Proposed write, or safe no-op / human review, matches the label |
 | **Heuristic Draft Score** | **87.3%** | Rule-based tone, grounding, and injection-leak check (not an LLM judge) |
 
-Known offline failures (4): ambiguous wording without keywords ("Need time off next month") is classified `unknown` by the offline heuristic, and one role-play injection is classified as an invoice. All four still route safely to human review: unclassifiable mail and inputs matching prompt-injection patterns never get an automated write or reply. To score the live model on the same dataset, set `GEMINI_API_KEY` and run:
+Known offline failures (4): ambiguous wording without keywords ("Need time off next month") is classified `unknown` by the offline heuristic, and one role-play injection is classified as an invoice. All four still route safely to human review: unclassifiable mail and inputs matching prompt-injection patterns never get an automated write or reply.
+
+**Live mode** (real LLM calls, `nvidia/nemotron-3-ultra-550b-a55b` via the NVIDIA API catalog; all 50 cases answered live, 0 heuristic fallbacks; raw per-case results in `evals/live_cache.json`):
+
+| Metric | Score |
+|:-------|:-----:|
+| **Classification Accuracy** | **96.0%** |
+| **Tool-Selection Accuracy** | **100.0%** |
+| **Field-Extraction Accuracy** | **100.0%** |
+| **Decision Accuracy** | **100.0%** |
+| **Heuristic Draft Score** | **90.0%** |
+
+Live failures (2): "Please send money for that service as discussed" is classified as an invoice (labelled `unknown`), and a SQL-injection email is classified `unknown` (labelled invoice). Both still route to human review. The grounding check discarded 5 hallucinated identifiers (e.g. `EMP-001` where the text had none) before they could reach a lookup.
+
+The first live run scored 66% classification / 74% decisions. The cause was ours, not the model's: with every schema field optional, the model omitted keys, which silently defaulted (`document_type` became `unknown`). The LLM now gets a schema where every field is required but nullable.
+
+To reproduce, set an API key and run:
 
 ```bash
-# Free tier (5 req/min, 20 req/day per model): throttle, use template drafts
-# (50 calls instead of ~85), and cache results so each day's run resumes
-# where the last one stopped. Takes ~3 daily runs.
-LLM_MAX_RPM=4 LLM_LIVE_DRAFTS=false python -m evals.runner --cache evals/live_cache.json
+# NVIDIA only (what the table above used)
+LLM_PROVIDERS=nvidia LLM_MAX_RPM=30 python -m evals.runner --cache evals/live_cache.json
+
+# Gemini free tier (5 req/min, 20 req/day per model): throttle, use template drafts,
+# and resume across days from the cache.
+LLM_PROVIDERS=gemini LLM_MAX_RPM=4 LLM_LIVE_DRAFTS=false python -m evals.runner --cache evals/live_cache.json
 ```
 
-If a live call fails (quota or outage), the run stops at that case instead of scoring a heuristic fallback, so partial results are always genuinely live and clearly marked `PARTIAL`.
+If every provider fails on a case (quota or outage), the run stops there instead of scoring a heuristic fallback, so partial results are always genuinely live and clearly marked `PARTIAL`.
+
+### LLM provider fallback
+Calls try providers in `LLM_PROVIDERS` order (default `gemini,nvidia`), then the offline heuristic. Transient errors are retried; a rate-limited provider is skipped for a cooldown (1 hour after a daily-quota error) so later calls go straight to the next one.
 
 ### Benchmark Comparison: Native Tool vs MCP Server
 `tools/mcp_server.py` exposes record lookups as an MCP tool over the stdio transport (JSON-RPC 2.0 with the `initialize` handshake, `tools/list`, `tools/call`). `tools/mcp_client.py` spawns it as a subprocess, so every MCP lookup crosses a real process and protocol boundary. Both paths share the same lookup backend, so the comparison isolates protocol cost:

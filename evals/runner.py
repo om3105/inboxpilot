@@ -26,7 +26,7 @@ import time
 from typing import Any
 
 from agent.graph import build_agent_graph
-from app.llm import FALLBACK_COUNTS, PROVIDER_COUNTS, LLMProvider
+from app.llm import FALLBACK_COUNTS, PROMPT_VERSION, PROVIDER_COUNTS, LLMProvider
 from app.models import RunStatus
 
 logger = logging.getLogger("inboxpilot.evals")
@@ -113,7 +113,8 @@ async def run_benchmark(
 
     provider = LLMProvider()
     mode = "live" if provider.is_live_available() else "offline"
-    cache_key = f"{mode}:{provider.model_name}:{'live_drafts' if provider.live_drafts else 'template_drafts'}"
+    drafts = "live_drafts" if provider.live_drafts else "template_drafts"
+    cache_key = f"{mode}:{provider.model_name}:{drafts}:prompt_v{PROMPT_VERSION}"
     cache = _load_cache(cache_path)
     case_cache: dict[str, Any] = cache.setdefault(cache_key, {})
     for k in FALLBACK_COUNTS:
