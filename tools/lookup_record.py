@@ -15,12 +15,20 @@ from scripts.seed_db import get_mock_employees, get_mock_invoices, get_mock_tick
 
 logger = logging.getLogger("inboxpilot.tools.lookup")
 
-# Fallback in-memory copies for offline environments
-_MOCK_CACHE = {
+# Fallback in-memory store for offline environments; shared with apply_update
+# so approved mutations are visible to subsequent lookups.
+MOCK_STORE = {
     "employees": {e["employee_id"]: e for e in get_mock_employees()},
     "invoices": {i["invoice_number"]: i for i in get_mock_invoices()},
     "tickets": {t["ticket_id"]: t for t in get_mock_tickets()},
 }
+
+
+def reset_mock_store() -> None:
+    """Restore the in-memory store to seed data (used by tests)."""
+    MOCK_STORE["employees"] = {e["employee_id"]: e for e in get_mock_employees()}
+    MOCK_STORE["invoices"] = {i["invoice_number"]: i for i in get_mock_invoices()}
+    MOCK_STORE["tickets"] = {t["ticket_id"]: t for t in get_mock_tickets()}
 
 
 async def lookup_record(
@@ -61,11 +69,19 @@ async def lookup_record(
                 record=clean_rec,
                 message=f"Record found in {collection}",
             )
+        # Live query succeeded with no match: don't fall back to mock data,
+        # or the agent could approve writes against records that don't exist.
+        return LookupResult(
+            found=False,
+            collection=collection,
+            record={},
+            message=f"No record matching {query} found in {collection}",
+        )
     except Exception as exc:
         logger.info("Live MongoDB lookup unavailable or timed out (%s); querying mock seed cache.", exc)
 
     # 2. Resilient fallback to mock cache
-    cache = _MOCK_CACHE.get(collection, {})
+    cache = MOCK_STORE.get(collection, {})
     for doc in cache.values():
         matches = True
         for k, v in query.items():

@@ -168,6 +168,7 @@ class AgentState(TypedDict, total=False):
     status: str                       # RunStatus value
     approval_decision: str | None     # "approve" | "reject" | None
     rejection_reason: str | None
+    update_result: dict[str, Any]     # apply_update() execution summary
 
     # Metadata
     error: str | None                 # error message if the run failed
