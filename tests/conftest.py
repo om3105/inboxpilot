@@ -8,6 +8,8 @@ from tools.lookup_record import reset_mock_store
 os.environ["GEMINI_API_KEY"] = ""
 os.environ["LANGFUSE_PUBLIC_KEY"] = ""
 os.environ["LANGFUSE_SECRET_KEY"] = ""
+os.environ["DEMO_TOKEN"] = "test-demo-token"
+os.environ["CORS_ORIGINS"] = "https://allowed.example"
 
 
 @pytest.fixture(autouse=True)

@@ -67,7 +67,8 @@ async def test_process_and_approve_flow(auth_headers):
         assert data["status"] == "awaiting_approval"
 
         # 2. Check run status via GET
-        get_res = await ac.get(f"/runs/{run_id}")
+        assert (await ac.get(f"/runs/{run_id}")).status_code == 401
+        get_res = await ac.get(f"/runs/{run_id}", headers=auth_headers)
         assert get_res.status_code == 200
         assert get_res.json()["requires_approval"] is True
 
@@ -103,3 +104,40 @@ async def test_process_and_reject_flow(auth_headers):
         )
         assert rej_res.status_code == 200
         assert rej_res.json()["status"] == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_missing_token_rejected():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        resp = await ac.post("/process", json={"raw_input": "x", "input_source": "text"})
+        assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_fails_closed_without_configured_token(monkeypatch):
+    import app.main as main_module
+    from app.config import Settings
+
+    monkeypatch.setattr(main_module, "get_settings", lambda: Settings(demo_token=""))
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        resp = await ac.post(
+            "/process",
+            json={"raw_input": "x", "input_source": "text"},
+            headers={"X-Demo-Token": ""},
+        )
+        assert resp.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_cors_allows_only_configured_origins_without_credentials():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        preflight = {"Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "X-Demo-Token"}
+        ok = await ac.options("/process", headers={"Origin": "https://allowed.example", **preflight})
+        assert ok.headers.get("access-control-allow-origin") == "https://allowed.example"
+        assert "access-control-allow-credentials" not in ok.headers
+
+        bad = await ac.options("/process", headers={"Origin": "https://evil.example", **preflight})
+        assert "access-control-allow-origin" not in bad.headers

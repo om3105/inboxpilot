@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
 import uuid
 from typing import Any, Literal
 from contextlib import asynccontextmanager
@@ -36,7 +37,7 @@ from agent.checkpointer import get_agent
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("inboxpilot.api")
 
-# Rate Limiter setup (5 requests/minute per IP)
+# Rate Limiter setup (60 requests/minute per IP by default; tighter per-route limits below)
 limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
 
 
@@ -60,13 +61,14 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# CORS Configuration for frontend live demos
+# CORS: auth is a header token, not cookies, so credentials are never needed.
+# Origins are configurable via CORS_ORIGINS; the built-in dashboard is same-origin.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=get_settings().cors_origin_list,
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "X-Demo-Token"],
 )
 
 
@@ -74,12 +76,14 @@ app.add_middleware(
 
 
 def verify_demo_token(x_demo_token: str | None = Header(default=None, alias="X-Demo-Token")):
-    """Check that mutating requests include the authorized demo token."""
+    """Require the configured demo token; fail closed if none is configured."""
     settings = get_settings()
-    # If no token configured or matches settings, allow
     if not settings.demo_token:
-        return True
-    if x_demo_token != settings.demo_token:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Server has no DEMO_TOKEN configured; protected endpoints are disabled.",
+        )
+    if not x_demo_token or not secrets.compare_digest(x_demo_token, settings.demo_token):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or missing X-Demo-Token header. Pass demo token configured on Render.",
@@ -204,7 +208,12 @@ async def process_document(request: Request, payload: ProcessRequest):
     )
 
 
-@app.get("/runs/{run_id}", response_model=ProcessResponse, tags=["Agent"])
+@app.get(
+    "/runs/{run_id}",
+    response_model=ProcessResponse,
+    dependencies=[Depends(verify_demo_token)],
+    tags=["Agent"],
+)
 async def get_run_status(run_id: str):
     """Retrieve current state and human-in-the-loop status for a run."""
     agent = get_agent()
