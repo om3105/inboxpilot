@@ -169,7 +169,12 @@ _REAL_INBOX_LIMIT = 200
 
 @app.get("/inbox", dependencies=[Depends(verify_demo_token)], tags=["Agent"])
 async def real_inbox():
-    """Emails that arrived from the real mailbox, each with the run it started."""
+    """Emails that arrived from the real mailbox, each with the run it started.
+
+    Always empty in public demo mode, where the endpoint is open to anyone.
+    """
+    if get_settings().demo_public:
+        return {"messages": []}
     return {"messages": _REAL_INBOX}
 
 
@@ -204,6 +209,12 @@ async def list_samples():
 @limiter.limit("15/minute")
 async def process_document(request: Request, payload: ProcessRequest):
     """Initiate an agent run on an inbound email or document."""
+    if payload.source_message and get_settings().demo_public:
+        # Real mail must never flow through the open demo: anyone could read it via /inbox or /runs.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Real mailbox input is disabled in public demo mode. Set DEMO_PUBLIC=false and use a DEMO_TOKEN.",
+        )
     run_id = f"run_{uuid.uuid4().hex[:12]}"
     agent = get_agent()
     config = {"configurable": {"thread_id": run_id}}

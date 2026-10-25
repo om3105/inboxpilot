@@ -119,7 +119,7 @@ uvicorn app.main:app --port 8000
 python -m scripts.mail_poller          # or --once to check a single time
 ```
 
-Safety rules built in: replies are only sent after a human approves; nothing is ever sent in public demo mode; the poller skips mail from its own address and auto-replies, so it can't loop; and a message is only marked read after the agent accepted it, so failures are retried. To keep it away from personal mail, add a Gmail filter that labels ops mail and set `MAIL_FOLDER` to that label. Note that email contents are sent to the configured LLM provider.
+Safety rules built in: replies are only sent after a human approves; public demo mode refuses real mail entirely (so real emails can never be read through the open demo) and never sends anything; the poller skips mail from its own address and auto-replies, so it can't loop; and a message is only marked read after the agent accepted it, so failures are retried. To keep it away from personal mail, add a Gmail filter that labels ops mail and set `MAIL_FOLDER` to that label. Note that email contents are sent to the configured LLM provider.
 
 ## Deploying
 

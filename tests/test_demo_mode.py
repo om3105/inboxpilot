@@ -81,3 +81,14 @@ def test_demo_mode_keeps_run_state_in_memory(monkeypatch):
     monkeypatch.setattr(cp, "get_settings", lambda: settings)
     monkeypatch.setattr(cp, "_checkpointer_instance", None)
     assert isinstance(cp.get_checkpointer(), MemorySaver)
+
+
+@pytest.mark.asyncio
+async def test_demo_mode_refuses_real_mail_and_hides_inbox(demo_mode):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.post("/process", json={
+            "raw_input": LEAVE, "input_source": "email",
+            "source_message": {"message_id": "<x@y>", "from_address": "aarav.sharma@acme.dev", "subject": "Leave"},
+        })
+        assert res.status_code == 403
+        assert (await ac.get("/inbox")).json() == {"messages": []}
