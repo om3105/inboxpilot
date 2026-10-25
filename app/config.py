@@ -9,6 +9,8 @@ Design decisions:
   changing one env var, not code.
 """
 
+from functools import lru_cache
+
 from pydantic_settings import BaseSettings
 from pydantic import Field
 
@@ -44,9 +46,17 @@ class Settings(BaseSettings):
 
     # ── API Security ──────────────────────────────────────────
     demo_token: str = Field(
-        default="demo-token-dev-secret",
-        description="Bearer token required for mutating endpoints",
+        default="",
+        description="Token required in X-Demo-Token for agent endpoints; empty disables them",
     )
+    cors_origins: str = Field(
+        default="",
+        description="Comma-separated origins allowed to call the API cross-origin",
+    )
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     # ── Server ────────────────────────────────────────────────
     port: int = Field(default=8000, description="HTTP port (set by Render)")
@@ -60,6 +70,7 @@ class Settings(BaseSettings):
     }
 
 
+@lru_cache
 def get_settings() -> Settings:
     """Factory cached at module level.  Import this, not the class directly."""
     return Settings()  # type: ignore[call-arg]
