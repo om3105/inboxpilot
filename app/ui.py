@@ -482,7 +482,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
         <div class="msg-subject"></div>
         <div class="msg-snippet"></div>
         ${tag ? `<span class="msg-tag ${tagClass}"></span>` : ""}`;
-      el.querySelector(".msg-from").textContent = m.id === "compose" ? "New message" : senderName(m.from);
+      el.querySelector(".msg-from").textContent = m.id === "compose" ? "New message" : senderName(m.from) + (m.real ? " · mailbox" : "");
       el.querySelector(".msg-date").textContent = m.id === "compose" ? "" : shortDate(m.date);
       el.querySelector(".msg-subject").textContent = m.subject;
       el.querySelector(".msg-snippet").textContent = m.snippet;
@@ -492,6 +492,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
     });
     const pending = Object.values(runsByMessage).filter((r) => r.status === "awaiting_approval").length;
     $("inboxCount").textContent = pending ? `${pending} awaiting you` : `${messages.length - 1} messages`;
+    if (current) $("processBtn").style.display = current.real ? "none" : "";
   }
 
   function statusTag(s) {
@@ -511,6 +512,9 @@ HTML_CONTENT = r"""<!DOCTYPE html>
     body.readOnly = current.id !== "compose";
     body.classList.toggle("editable", current.id === "compose");
     renderInbox();
+    $("runHint").textContent = current.real
+      ? "Arrived from your mailbox. Approving applies the change and, if reply sending is on, emails the reply."
+      : "Reads the email, checks it against company records, and proposes a change for you to approve.";
     const run = runsByMessage[id];
     if (run) { currentRunId = run.run_id; renderState(run); }
     else { currentRunId = null; resetReview(); }
@@ -554,6 +558,32 @@ HTML_CONTENT = r"""<!DOCTYPE html>
       throw new Error(`Request failed (${res.status}): ${detail}`);
     }
     return data;
+  }
+
+  async function getApi(path) {
+    const token = $("demoToken").value.trim();
+    const res = await fetch(path, { headers: token ? { "X-Demo-Token": token } : {} });
+    if (!res.ok) throw new Error(`GET ${path} failed (${res.status})`);
+    return res.json();
+  }
+
+  // ── Real mailbox (filled by scripts/mail_poller.py) ──────
+  async function loadRealInbox() {
+    if (demoPublic || !$("demoToken").value.trim()) return;
+    let items = [];
+    try { items = (await getApi("/inbox")).messages || []; } catch (_) { return; }
+    const known = new Set(messages.map((m) => m.id));
+    const fresh = [];
+    for (const it of items) {
+      if (known.has(it.run_id)) continue;
+      const m = parseEmail(it.run_id, it.raw);
+      m.real = true;
+      fresh.push(m);
+      try { runsByMessage[it.run_id] = await getApi(`/runs/${it.run_id}`); } catch (_) {}
+    }
+    if (!fresh.length) return;
+    messages = fresh.concat(messages);
+    renderInbox();
   }
 
   // ── Actions ──────────────────────────────────────────────
@@ -674,7 +704,12 @@ HTML_CONTENT = r"""<!DOCTYPE html>
       needs_human_review: data.error ? `Why: ${data.error}` : "",
       failed: data.error ? `The update did not go through: ${data.error}` : "The update did not go through.",
     };
-    $("outcome").textContent = outcomes[data.status] || (awaiting ? "Nothing is written until you approve." : "");
+    let outcome = outcomes[data.status] || (awaiting ? "Nothing is written until you approve." : "");
+    const rr = data.reply_result;
+    if (data.status === "completed" && rr) {
+      outcome += rr.sent ? ` Reply emailed to ${rr.to}.` : ` Reply not sent (${rr.reason}).`;
+    }
+    $("outcome").textContent = outcome;
 
     // Extracted fields
     const fl = $("fieldList");
@@ -743,8 +778,9 @@ HTML_CONTENT = r"""<!DOCTYPE html>
   }
 
   loadKey();
-  loadConfig();
-  loadInbox();
+  loadConfig().then(() => loadInbox()).then(() => loadRealInbox());
+  $("demoToken").addEventListener("change", () => loadRealInbox());
+  setInterval(() => loadRealInbox(), 30000);
 </script>
 </body>
 </html>

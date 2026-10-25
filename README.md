@@ -98,10 +98,28 @@ Everything in `.env` is optional. With no keys it runs fully offline on the rule
 ```bash
 python -m scripts.seed_db            # load 30 sample records into MongoDB (optional)
 uvicorn app.main:app --reload        # dashboard at http://localhost:8000, API docs at /docs
-pytest tests/                        # 68 tests
+pytest tests/                        # 80 tests
 python -m evals.runner               # 50-case eval (offline unless a key is set)
 python -m evals.compare_mcp          # native vs MCP benchmark
 ```
+
+## Using it on real email
+
+`scripts/mail_poller.py` connects InboxPilot to a real mailbox. It checks a folder for unread mail every minute, sends each email to the agent, and marks it read once the agent has it. The emails show up at the top of the dashboard inbox (enter your access key), where you approve or reject as usual. With `MAIL_SEND_REPLIES=true`, approving also emails the drafted reply to the sender, threaded onto their message. Reject sends nothing.
+
+Setup with Gmail (free):
+
+1. Use a separate Gmail account for testing, not your personal one.
+2. Turn on 2-Step Verification, then create an app password (Google Account → Security → App passwords).
+3. In `.env`: `MAIL_USERNAME`, `MAIL_PASSWORD` (the app password), `DEMO_PUBLIC=false`, a `DEMO_TOKEN`, and `MAIL_SEND_REPLIES=true` when you want replies sent.
+4. Run the app and the poller side by side:
+
+```bash
+uvicorn app.main:app --port 8000
+python -m scripts.mail_poller          # or --once to check a single time
+```
+
+Safety rules built in: replies are only sent after a human approves; nothing is ever sent in public demo mode; the poller skips mail from its own address and auto-replies, so it can't loop; and a message is only marked read after the agent accepted it, so failures are retried. To keep it away from personal mail, add a Gmail filter that labels ops mail and set `MAIL_FOLDER` to that label. Note that email contents are sent to the configured LLM provider.
 
 ## Deploying
 
@@ -116,11 +134,11 @@ If you use MongoDB Atlas with Render's free plan, allow access from `0.0.0.0/0` 
 ```text
 agent/      LangGraph workflow (graph.py) and checkpointer setup
 app/        FastAPI app, dashboard, settings, LLM providers, tracing
-tools/      email/PDF parsing, extraction, lookup, drafting, apply_update, MCP server + client
+tools/      email/PDF parsing, extraction, lookup, drafting, apply_update, send_reply, MCP server + client
 evals/      dataset, scoring runner, MCP benchmark, cached live results
-tests/      68 tests: agent flow, API, demo mode, LLM fallback, MCP, evals
+tests/      80 tests: agent flow, API, demo mode, LLM fallback, MCP, evals
 samples/    the example emails shown in the demo inbox
-scripts/    MongoDB seeding and eval dataset generation
+scripts/    real-mailbox poller, MongoDB seeding, eval dataset generation
 ```
 
 ## Limitations

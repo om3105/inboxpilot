@@ -79,6 +79,19 @@ class Settings(BaseSettings):
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
+    # ── Real mailbox (IMAP in, SMTP out) ───────────────────────
+    mail_username: str = Field(default="", description="Mailbox address, e.g. ops.inboxpilot@gmail.com")
+    mail_password: str = Field(default="", description="Mailbox password; for Gmail use an app password")
+    mail_imap_host: str = Field(default="imap.gmail.com", description="IMAP server the poller reads from")
+    mail_smtp_host: str = Field(default="smtp.gmail.com", description="SMTP server approved replies are sent through")
+    mail_folder: str = Field(default="INBOX", description="Folder (Gmail label) the poller watches for unread mail")
+    mail_poll_seconds: int = Field(default=60, description="Seconds between mailbox checks")
+    mail_send_replies: bool = Field(
+        default=False,
+        description="Send the drafted reply after a human approves. Never sends in public demo mode.",
+    )
+    inboxpilot_api_url: str = Field(default="http://localhost:8000", description="API the poller submits mail to")
+
     # ── Server ────────────────────────────────────────────────
     port: int = Field(default=8000, description="HTTP port (set by Render)")
 

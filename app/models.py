@@ -170,6 +170,8 @@ class AgentState(TypedDict, total=False):
     approval_decision: str | None     # "approve" | "reject" | None
     rejection_reason: str | None
     update_result: dict[str, Any]     # apply_update() execution summary
+    source_message: dict[str, Any]    # real email this run came from (message_id, from_address, subject)
+    reply_result: dict[str, Any]      # send_reply() summary after approval
 
     # Metadata
     error: str | None                 # error message if the run failed
