@@ -273,7 +273,11 @@ async def approve_run(request: Request, run_id: str):
         draft_reply=values.get("draft_reply"),
         tool_trace=values.get("tool_trace", []),
         requires_approval=False,
-        message="Proposed action approved and successfully executed.",
+        message=(
+            "Proposed action approved and successfully executed."
+            if values.get("status") == RunStatus.COMPLETED.value
+            else f"Proposed action approved but execution failed: {values.get('error', 'unknown error')}"
+        ),
     )
 
 

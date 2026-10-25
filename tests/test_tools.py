@@ -103,3 +103,31 @@ async def test_apply_update_leave():
     res = await apply_update(action)
     assert res["success"] is True
     assert res["modified_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_apply_update_visible_to_subsequent_lookup():
+    action = ProposedAction(
+        action_type=ActionType.DEDUCT_LEAVE,
+        collection="employees",
+        filter_query={"employee_id": "EMP001"},
+        update_payload={"$inc": {"leave_balance.casual": -3}},
+        reason="Deduct 3 casual leave days",
+    )
+    await apply_update(action)
+    result = await lookup_record("employees", {"employee_id": "EMP001"})
+    assert result.record["leave_balance"]["casual"] == 7
+
+
+@pytest.mark.asyncio
+async def test_apply_update_no_match_reports_failure():
+    action = ProposedAction(
+        action_type=ActionType.CLOSE_TICKET,
+        collection="tickets",
+        filter_query={"ticket_id": "TKT-999"},
+        update_payload={"$set": {"status": "resolved"}},
+        reason="Close nonexistent ticket",
+    )
+    res = await apply_update(action)
+    assert res["success"] is False
+    assert res["modified_count"] == 0

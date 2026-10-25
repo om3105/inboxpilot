@@ -107,3 +107,65 @@ def test_mermaid_diagram():
     assert "graph TD" in diagram
     assert "human_approval_gate" in diagram
     assert "classify_and_extract" in diagram
+
+
+def test_compute_leave_days():
+    from agent.graph import compute_leave_days
+    assert compute_leave_days("2024-10-24", "2024-10-25") == 2
+    assert compute_leave_days("2024-10-24", None) == 1
+    assert compute_leave_days(None, None) == 1
+    assert compute_leave_days("2024-10-01", "2024-10-14") == 14
+    assert compute_leave_days("2024-10-25", "2024-10-24") is None
+
+
+async def _run_leave(text: str):
+    agent = build_agent_graph()
+    thread_id = str(uuid.uuid4())
+    config = {"configurable": {"thread_id": thread_id}}
+    await agent.ainvoke(
+        {"run_id": thread_id, "raw_input": text, "input_source": "email", "tool_trace": []},
+        config=config,
+    )
+    return agent, config
+
+
+@pytest.mark.asyncio
+async def test_leave_deduction_uses_requested_date_range():
+    agent, config = await _run_leave(
+        "From: aarav.sharma@acme.dev\nSubject: Casual leave\n\n"
+        "Requesting casual leave from 2024-11-04 to 2024-11-08. EMP001."
+    )
+    state = await agent.aget_state(config)
+    payload = state.values["proposed_action"]["update_payload"]
+    assert payload == {"$inc": {"leave_balance.casual": -5}}
+
+
+@pytest.mark.asyncio
+async def test_leave_exceeding_balance_routes_to_human_review():
+    # EMP001 has 10 casual days; a 14-day request must not be auto-proposed.
+    agent, config = await _run_leave(
+        "From: aarav.sharma@acme.dev\nSubject: Casual leave\n\n"
+        "Requesting casual leave from 2024-10-01 to 2024-10-14. EMP001."
+    )
+    state = await agent.aget_state(config)
+    assert state.next == ()
+    assert state.values["status"] == RunStatus.NEEDS_HUMAN_REVIEW.value
+    assert "Insufficient" in state.values["error"]
+
+
+@pytest.mark.asyncio
+async def test_approved_deduction_persists_across_runs():
+    text = (
+        "From: aarav.sharma@acme.dev\nSubject: Casual leave\n\n"
+        "Requesting casual leave from 2024-11-04 to 2024-11-09. EMP001."
+    )
+    # First 6-day request approved: 10 -> 4 remaining.
+    agent, config = await _run_leave(text)
+    await agent.ainvoke(Command(resume={"decision": "approve"}), config=config)
+    final = await agent.aget_state(config)
+    assert final.values["update_result"]["success"] is True
+
+    # Same request again must now fail the balance check.
+    agent, config = await _run_leave(text)
+    state = await agent.aget_state(config)
+    assert state.values["status"] == RunStatus.NEEDS_HUMAN_REVIEW.value

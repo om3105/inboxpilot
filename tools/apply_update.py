@@ -10,16 +10,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 from app.models import ProposedAction
-from scripts.seed_db import get_mock_employees, get_mock_invoices, get_mock_tickets
+from tools.lookup_record import MOCK_STORE
 
 logger = logging.getLogger("inboxpilot.tools.apply_update")
-
-# Local in-memory store for fallback execution
-_LOCAL_STORE = {
-    "employees": {e["employee_id"]: e for e in get_mock_employees()},
-    "invoices": {i["invoice_number"]: i for i in get_mock_invoices()},
-    "tickets": {t["ticket_id"]: t for t in get_mock_tickets()},
-}
 
 
 async def apply_update(action: ProposedAction) -> dict[str, Any]:
@@ -42,7 +35,7 @@ async def apply_update(action: ProposedAction) -> dict[str, Any]:
         coll = db[collection]
         result = await coll.update_one(filter_query, update_payload)
         return {
-            "success": True,
+            "success": result.matched_count > 0,
             "matched_count": result.matched_count,
             "modified_count": result.modified_count,
             "collection": collection,
@@ -53,7 +46,7 @@ async def apply_update(action: ProposedAction) -> dict[str, Any]:
         logger.info("Live MongoDB unavailable (%s); executing on local mock store.", exc)
 
     # 2. Local fallback execution
-    store = _LOCAL_STORE.get(collection, {})
+    store = MOCK_STORE.get(collection, {})
     matched_key = None
     for k, doc in store.items():
         if all(str(doc.get(q_k, "")).lower() == str(q_v).lower() for q_k, q_v in filter_query.items()):

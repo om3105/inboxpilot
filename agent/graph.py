@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Literal
-from datetime import datetime
+from datetime import date, datetime
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import interrupt, Command
@@ -50,6 +50,23 @@ from tools.draft_reply import draft_reply
 from tools.apply_update import apply_update
 
 logger = logging.getLogger("inboxpilot.agent")
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def compute_leave_days(start: str | None, end: str | None) -> int | None:
+    """Return inclusive calendar days between ISO dates, 1 if dates are missing, None if invalid."""
+    if not start:
+        return 1
+    try:
+        start_d = date.fromisoformat(start)
+        end_d = date.fromisoformat(end) if end else start_d
+    except ValueError:
+        return 1
+    if end_d < start_d:
+        return None
+    return (end_d - start_d).days + 1
 
 
 # ── Graph Node Implementations ────────────────────────────────────────────────
@@ -167,8 +184,12 @@ async def decide_action_node(state: AgentState) -> dict[str, Any]:
     if doc_type == DocumentType.LEAVE_REQUEST.value and found:
         leave_type = extracted.get("leave_type") or "casual"
         emp_id = record.get("employee_id")
-        # Compute leave days requested (simple default 2 days if start/end provided)
-        days = 2
+        days = compute_leave_days(extracted.get("leave_start"), extracted.get("leave_end"))
+        if days is None:
+            return {
+                "status": RunStatus.NEEDS_HUMAN_REVIEW.value,
+                "error": "Invalid leave date range: end date is before start date",
+            }
         balance = record.get("leave_balance", {}).get(leave_type, 0)
         if balance < days:
             return {
@@ -280,8 +301,17 @@ async def execute_update_node(state: AgentState) -> dict[str, Any]:
     result = await apply_update(action)
     trace.append("apply_update")
 
+    if not result.get("success"):
+        return {
+            "status": RunStatus.FAILED.value,
+            "error": result.get("error", "Database update did not modify any record"),
+            "update_result": result,
+            "tool_trace": trace,
+        }
+
     return {
         "status": RunStatus.COMPLETED.value,
+        "update_result": result,
         "tool_trace": trace,
     }
 
