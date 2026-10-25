@@ -132,3 +132,23 @@ def test_draft_html_is_converted_to_plain_text():
     from app.llm import _to_plain_text
     assert _to_plain_text("Dear Aarav,<br><br>Approved.<br/>Regards,<p>Ops</p>") == "Dear Aarav,\n\nApproved.\nRegards,\n\nOps"
     assert _to_plain_text("No tags here.") == "No tags here."
+
+
+@pytest.mark.asyncio
+async def test_draft_uses_plain_text_and_template_headers(provider, monkeypatch):
+    from langchain_core.messages import AIMessage
+
+    class _TextModel:
+        def with_structured_output(self, schema):
+            raise AssertionError("drafts must not use structured output")
+
+        async def ainvoke(self, prompt):
+            return AIMessage(content="Subject: Re: Leave\n\nDear Aarav,\n\nYour **EMP001** request is queued.\n\nInboxPilot Operations")
+
+    monkeypatch.setattr(LLMProvider, "_chat_model", lambda self, p, t: _TextModel())
+    ctx = {"document_type": "leave_request", "extracted": {"sender": "aarav.sharma@acme.dev", "employee_name": "Aarav Sharma"}}
+    draft = await provider.generate_draft(ctx)
+    assert draft.to == "aarav.sharma@acme.dev"
+    assert draft.subject == "Re: Leave Request - Aarav Sharma"
+    assert draft.body == "Dear Aarav,\n\nYour EMP001 request is queued.\n\nInboxPilot Operations"
+    assert llm_module.FALLBACK_COUNTS["draft"] == 0

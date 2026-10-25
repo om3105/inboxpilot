@@ -98,7 +98,6 @@ _LLMExtraction = _required_schema(ExtractedEmail, "ExtractedEmail", {
         "a ticket; unknown: none of these (spam, newsletters, unrelated mail)"
     ),
 })
-_LLMDraft = _required_schema(DraftReply, "DraftReply", {})
 
 
 _IDENTIFIER_FIELDS = ("employee_id", "invoice_number", "ticket_id")
@@ -124,6 +123,9 @@ def _to_plain_text(body: str) -> str:
     body = re.sub(r"<br\s*/?>", "\n", body, flags=re.I)
     body = re.sub(r"</?p(\s[^>]*)?>", "\n\n", body, flags=re.I)
     body = re.sub(r"<[^>]+>", "", body)
+    body = re.sub(r"^\s*subject:.*\n+", "", body, flags=re.I)  # models sometimes add one anyway
+    body = re.sub(r"(\*\*|__)(.+?)\1", r"\2", body)          # markdown bold
+    body = re.sub(r"^#{1,6}\s+", "", body, flags=re.M)         # markdown headings
     return re.sub(r"\n{3,}", "\n\n", body).strip()
 
 
@@ -171,15 +173,22 @@ class LLMProvider:
             )
         if provider == "nvidia":
             from langchain_nvidia_ai_endpoints import ChatNVIDIA
+            # The client defaults to max_tokens=1024; reasoning models spend much of
+            # that on hidden reasoning, which truncated drafts mid-sentence.
             return ChatNVIDIA(
                 model=self.models["nvidia"],
                 api_key=self.keys["nvidia"],
                 temperature=temperature,
+                max_tokens=4096,
             )
         raise ValueError(f"Unknown LLM provider: {provider}")
 
-    async def _invoke_structured(self, schema: type[T], prompt: str, temperature: float) -> T:
-        """Try each provider in order; raise only if all of them fail."""
+    async def _invoke(self, prompt: str, temperature: float, schema: type[T] | None = None) -> T | str:
+        """Try each provider in order; raise only if all of them fail.
+
+        With ``schema`` the response is parsed into it via structured output;
+        without, the plain response text is returned.
+        """
         errors = []
         for provider in self.providers:
             if _cooldown_until.get(provider, 0.0) > time.monotonic():
@@ -187,10 +196,15 @@ class LLMProvider:
                 continue
             for attempt in range(_ATTEMPTS_PER_PROVIDER):
                 try:
-                    llm = self._chat_model(provider, temperature).with_structured_output(schema)
+                    model = self._chat_model(provider, temperature)
+                    llm = model.with_structured_output(schema) if schema else model
                     await _throttle(self.max_rpm)
                     result = await asyncio.wait_for(llm.ainvoke(prompt), timeout=90)
-                    if isinstance(result, schema):
+                    if schema is None:
+                        parsed = result.text if hasattr(result, "text") else str(result)
+                        if not parsed.strip():
+                            raise ValueError("empty response")
+                    elif isinstance(result, schema):
                         parsed = result
                     else:
                         parsed = schema.model_validate(result.model_dump() if isinstance(result, BaseModel) else result)
@@ -226,7 +240,7 @@ class LLMProvider:
             f"Input text:\n{text}"
         )
         try:
-            result = await self._invoke_structured(_LLMExtraction, prompt, temperature=0.0)
+            result = await self._invoke(prompt, temperature=0.0, schema=_LLMExtraction)
             return _ground_identifiers(ExtractedEmail.model_validate(result.model_dump()), text)
         except Exception as exc:
             FALLBACK_COUNTS["extract"] += 1
@@ -238,17 +252,22 @@ class LLMProvider:
         if not self.is_live_available() or not self.live_drafts:
             return self._mock_draft(context)
 
+        # Drafts are requested as plain text, not structured output: under JSON-schema
+        # constrained decoding NVIDIA models closed the body string after ~250 chars.
+        # Recipient and subject come from the deterministic template instead.
         prompt = (
             "You are an enterprise operations assistant drafting a response email for InboxPilot.\n"
             "Write a polite, professional reply to the sender, grounded in this operational context. "
             "Reference the relevant employee, invoice, or ticket ID. Never promise an outcome that "
-            "still awaits human approval.\n\n"
+            "still awaits human approval.\n"
+            "Output only the email body as plain text: a greeting, two to four short paragraphs, and a "
+            "sign-off from 'InboxPilot Operations'. No subject line, markdown, or HTML.\n\n"
             f"{json.dumps(context, indent=2, default=str)}"
         )
         try:
-            result = await self._invoke_structured(_LLMDraft, prompt, temperature=0.2)
-            draft = DraftReply.model_validate(result.model_dump())
-            draft.body = _to_plain_text(draft.body)
+            text = await self._invoke(prompt, temperature=0.2)
+            draft = self._mock_draft(context)
+            draft.body = _to_plain_text(text)
             return draft
         except Exception as exc:
             FALLBACK_COUNTS["draft"] += 1
