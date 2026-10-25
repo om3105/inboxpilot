@@ -119,6 +119,14 @@ def _ground_identifiers(extracted: ExtractedEmail, source_text: str) -> Extracte
     return extracted
 
 
+def _to_plain_text(body: str) -> str:
+    """Models sometimes emit HTML in email bodies; the dashboard renders plain text."""
+    body = re.sub(r"<br\s*/?>", "\n", body, flags=re.I)
+    body = re.sub(r"</?p(\s[^>]*)?>", "\n\n", body, flags=re.I)
+    body = re.sub(r"<[^>]+>", "", body)
+    return re.sub(r"\n{3,}", "\n\n", body).strip()
+
+
 class LLMProvider:
     """Interface for invoking language models with structured outputs."""
 
@@ -239,7 +247,9 @@ class LLMProvider:
         )
         try:
             result = await self._invoke_structured(_LLMDraft, prompt, temperature=0.2)
-            return DraftReply.model_validate(result.model_dump())
+            draft = DraftReply.model_validate(result.model_dump())
+            draft.body = _to_plain_text(draft.body)
+            return draft
         except Exception as exc:
             FALLBACK_COUNTS["draft"] += 1
             logger.warning("LLM draft generation failed (%s); using deterministic template.", exc)

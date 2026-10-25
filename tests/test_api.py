@@ -141,3 +141,24 @@ async def test_cors_allows_only_configured_origins_without_credentials():
 
         bad = await ac.options("/process", headers={"Origin": "https://evil.example", **preflight})
         assert "access-control-allow-origin" not in bad.headers
+
+
+@pytest.mark.asyncio
+async def test_review_outcome_reports_error_reason(auth_headers):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        res = await ac.post(
+            "/process",
+            json={"raw_input": "From: x@y.com\nSubject: Leave\n\nI want 2 days off. EMP999.", "input_source": "email"},
+            headers=auth_headers,
+        )
+        data = res.json()
+        assert data["status"] == "needs_human_review"
+        assert "EMP999" in data["error"]
+
+
+def test_dashboard_has_no_prefilled_token_or_alerts():
+    from app.ui import HTML_CONTENT
+    assert 'value="change-me' not in HTML_CONTENT
+    assert "alert(" not in HTML_CONTENT
+    assert 'id="errorBanner"' in HTML_CONTENT
