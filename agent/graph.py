@@ -26,6 +26,7 @@ Pipeline Topology:
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Literal
 from datetime import date, datetime
 
@@ -69,6 +70,20 @@ def compute_leave_days(start: str | None, end: str | None) -> int | None:
     return (end_d - start_d).days + 1
 
 
+_INJECTION_PATTERNS = {
+    "instruction_override": re.compile(r"\b(ignore|disregard|forget)\b.{0,30}\b(instructions|rules|prompts?)\b", re.I),
+    "role_hijack": re.compile(r"\b(you are now|forget (that )?you are|act as|pretend to be)\b", re.I),
+    "system_override": re.compile(r"\bsystem (override|prompt)\b", re.I),
+    "sql_injection": re.compile(r"\b(drop\s+table|delete\s+from|update\s+\w+\s+set)\b|\bwhere\s+1\s*=\s*1\b", re.I),
+    "secret_exfiltration": re.compile(r"\b(secret|api)[ _-]?keys?\b|\bbypass\s+auth", re.I),
+}
+
+
+def detect_injection(text: str) -> list[str]:
+    """Return the names of prompt-injection patterns found in raw input."""
+    return [name for name, pattern in _INJECTION_PATTERNS.items() if pattern.search(text or "")]
+
+
 # ── Graph Node Implementations ────────────────────────────────────────────────
 
 
@@ -79,7 +94,7 @@ async def classify_and_extract_node(state: AgentState) -> dict[str, Any]:
     trace = list(state.get("tool_trace", []))
 
     text_to_extract = raw
-    if source == "email" and ("From:" in raw or "\n\n" in raw):
+    if source == "email":
         try:
             parsed_mail = read_email(raw)
             text_to_extract = f"From: {parsed_mail['sender']}\nSubject: {parsed_mail['subject']}\n\n{parsed_mail['body']}"
@@ -105,6 +120,7 @@ async def classify_and_extract_node(state: AgentState) -> dict[str, Any]:
         return {
             "document_type": extracted.document_type.value,
             "extracted": extracted.model_dump(),
+            "security_flags": detect_injection(raw),
             "status": RunStatus.PROCESSING.value,
             "tool_trace": trace,
         }
@@ -171,6 +187,21 @@ async def decide_action_node(state: AgentState) -> dict[str, Any]:
     lookup_dict = state.get("lookup_result", {})
     record = lookup_dict.get("record", {})
     found = lookup_dict.get("found", False)
+
+    # Inputs that look like prompt injection never get an automated write or reply
+    flags = state.get("security_flags") or []
+    if flags:
+        return {
+            "status": RunStatus.NEEDS_HUMAN_REVIEW.value,
+            "error": f"Possible prompt injection detected: {', '.join(flags)}",
+        }
+
+    # Unclassifiable mail (spam, newsletters, vague requests) goes to a human, not an auto-reply
+    if doc_type == DocumentType.UNKNOWN.value:
+        return {
+            "status": RunStatus.NEEDS_HUMAN_REVIEW.value,
+            "error": "Could not classify document; no automated reply drafted",
+        }
 
     # Discrepancy routing: if expected business record doesn't exist, flag for human review
     if not found and doc_type in [DocumentType.LEAVE_REQUEST.value, DocumentType.INVOICE.value, DocumentType.SUPPORT_TICKET.value]:
