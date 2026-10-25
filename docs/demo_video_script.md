@@ -7,7 +7,7 @@
 ---
 
 ### [00:00 - 00:25] Hook & Problem Statement
-* **Visual:** Show InboxPilot architecture diagram on the screen, then transition to Swagger UI (`https://inboxpilot-demo.onrender.com/docs`).
+* **Visual:** Show InboxPilot architecture diagram on the screen, then transition to Swagger UI (`https://inboxpilot-sxka.onrender.com/docs`).
 * **Spoken Script:**
   > *"Hi, I'm [Your Name]. In enterprise ops, operations teams spend thousands of hours reading inbound employee leave requests, supplier invoices, and IT tickets, cross-checking internal databases, and manually drafting responses.
   >
