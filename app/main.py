@@ -76,8 +76,14 @@ app.add_middleware(
 
 
 def verify_demo_token(x_demo_token: str | None = Header(default=None, alias="X-Demo-Token")):
-    """Require the configured demo token; fail closed if none is configured."""
+    """Require the configured demo token; fail closed if none is configured.
+
+    In public demo mode no token is needed: every write goes to the in-memory
+    sandbox, never the real database (see tools/apply_update.py).
+    """
     settings = get_settings()
+    if settings.demo_public:
+        return True
     if not settings.demo_token:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -126,6 +132,12 @@ async def dashboard():
     """Interactive dark-mode web user interface for demoing InboxPilot."""
     from app.ui import HTML_CONTENT
     return HTML_CONTENT
+
+
+@app.get("/config", tags=["System"])
+async def public_config():
+    """Non-secret settings the dashboard needs (whether an access key is required)."""
+    return {"demo_public": get_settings().demo_public}
 
 
 @app.get("/health", tags=["System"])

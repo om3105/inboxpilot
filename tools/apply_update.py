@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from app.config import get_settings
 from app.models import ProposedAction
 from tools.lookup_record import MOCK_STORE
 
@@ -28,22 +29,24 @@ async def apply_update(action: ProposedAction) -> dict[str, Any]:
     filter_query = action.filter_query
     update_payload = action.update_payload
 
-    # 1. Try live MongoDB
-    try:
-        from app.database import get_database
-        db = get_database()
-        coll = db[collection]
-        result = await coll.update_one(filter_query, update_payload)
-        return {
-            "success": result.matched_count > 0,
-            "matched_count": result.matched_count,
-            "modified_count": result.modified_count,
-            "collection": collection,
-            "reason": action.reason,
-            "mode": "mongodb_live",
-        }
-    except Exception as exc:
-        logger.info("Live MongoDB unavailable (%s); executing on local mock store.", exc)
+    # 1. Try live MongoDB, except in public demo mode: the demo sandbox never
+    #    reads or writes the real database.
+    if not get_settings().demo_public:
+        try:
+            from app.database import get_database
+            db = get_database()
+            coll = db[collection]
+            result = await coll.update_one(filter_query, update_payload)
+            return {
+                "success": result.matched_count > 0,
+                "matched_count": result.matched_count,
+                "modified_count": result.modified_count,
+                "collection": collection,
+                "reason": action.reason,
+                "mode": "mongodb_live",
+            }
+        except Exception as exc:
+            logger.info("Live MongoDB unavailable (%s); executing on local mock store.", exc)
 
     # 2. Local fallback execution
     store = MOCK_STORE.get(collection, {})
