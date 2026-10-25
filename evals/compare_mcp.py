@@ -1,80 +1,97 @@
 """
-evals/compare_mcp.py — Benchmark comparison: Native DB Tool vs MCP Protocol Tool.
+evals/compare_mcp.py — Benchmark comparison: native lookup tool vs MCP stdio server.
 
-Compares:
-  - Lookup Accuracy (%)
-  - Latency (ms)
-  - Architectural Decoupling / Interoperability
+Both paths share the same backend (tools.lookup_record), so this measures:
+  - Result agreement: does the MCP path return the same record as the native call?
+  - Latency: per-lookup cost of the in-process call vs a JSON-RPC round trip to
+    a separate server process, plus the one-time server startup + handshake.
 """
 
+from __future__ import annotations
+
 import asyncio
-import time
 import json
+import statistics
+import time
+
 from tools.lookup_record import lookup_record
-from tools.mcp_client import mcp_lookup_record
+from tools.mcp_client import MCPClient
+
+_ID_FIELDS = {
+    "leave_request": ("employees", "employee_id"),
+    "invoice": ("invoices", "invoice_number"),
+    "support_ticket": ("tickets", "ticket_id"),
+}
 
 
-async def compare():
-    with open("evals/dataset.json", "r") as f:
+def build_lookups(dataset_path: str = "evals/dataset.json") -> list[tuple[str, str, str]]:
+    """Derive (collection, key, value) lookups from labelled dataset identifiers."""
+    with open(dataset_path, "r", encoding="utf-8") as f:
         cases = json.load(f)
-
-    # 1. Native Direct Lookup Benchmark
-    start = time.perf_counter()
-    native_correct = 0
-    total = 0
+    lookups = []
     for c in cases:
-        extracted = c.get("expected_extracted", {})
-        doc_type = c.get("expected_doc_type")
-        if doc_type == "leave_request" and extracted.get("employee_id"):
-            total += 1
-            res = await lookup_record("employees", {"employee_id": extracted["employee_id"]})
-            if res.found:
-                native_correct += 1
-        elif doc_type == "invoice" and extracted.get("invoice_number"):
-            total += 1
-            res = await lookup_record("invoices", {"invoice_number": extracted["invoice_number"]})
-            if res.found:
-                native_correct += 1
-        elif doc_type == "support_ticket" and extracted.get("ticket_id"):
-            total += 1
-            res = await lookup_record("tickets", {"ticket_id": extracted["ticket_id"]})
-            if res.found:
-                native_correct += 1
+        target = _ID_FIELDS.get(c.get("expected_doc_type"))
+        if not target:
+            continue
+        collection, key = target
+        value = c.get("expected_extracted", {}).get(key)
+        if value:
+            lookups.append((collection, key, value))
+    return lookups
 
-    native_duration_ms = (time.perf_counter() - start) * 1000
 
-    # 2. MCP Protocol Tool Benchmark
+def _stats(samples_ms: list[float]) -> dict[str, float]:
+    ordered = sorted(samples_ms)
+    return {
+        "mean_ms": statistics.fmean(ordered),
+        "p50_ms": statistics.median(ordered),
+        "p95_ms": ordered[max(0, round(0.95 * len(ordered)) - 1)],
+    }
+
+
+async def compare(dataset_path: str = "evals/dataset.json", verbose: bool = True) -> dict:
+    lookups = build_lookups(dataset_path)
+
+    native_results, native_ms = [], []
+    for collection, key, value in lookups:
+        start = time.perf_counter()
+        native_results.append(await lookup_record(collection, {key: value}))
+        native_ms.append((time.perf_counter() - start) * 1000)
+
     start = time.perf_counter()
-    mcp_correct = 0
-    for c in cases:
-        extracted = c.get("expected_extracted", {})
-        doc_type = c.get("expected_doc_type")
-        if doc_type == "leave_request" and extracted.get("employee_id"):
-            res = await mcp_lookup_record("employees", "employee_id", extracted["employee_id"])
-            if res.found:
-                mcp_correct += 1
-        elif doc_type == "invoice" and extracted.get("invoice_number"):
-            res = await mcp_lookup_record("invoices", "invoice_number", extracted["invoice_number"])
-            if res.found:
-                mcp_correct += 1
-        elif doc_type == "support_ticket" and extracted.get("ticket_id"):
-            res = await mcp_lookup_record("tickets", "ticket_id", extracted["ticket_id"])
-            if res.found:
-                mcp_correct += 1
+    async with MCPClient() as client:
+        startup_ms = (time.perf_counter() - start) * 1000
+        mcp_results, mcp_ms = [], []
+        for collection, key, value in lookups:
+            start = time.perf_counter()
+            mcp_results.append(await client.lookup_record(collection, key, value))
+            mcp_ms.append((time.perf_counter() - start) * 1000)
 
-    mcp_duration_ms = (time.perf_counter() - start) * 1000
+    agree = sum(
+        n.found == m.found and n.record.get(k) == m.record.get(k)
+        for n, m, (_, k, _) in zip(native_results, mcp_results, lookups)
+    )
+    results = {
+        "lookups": len(lookups),
+        "found": sum(r.found for r in native_results),
+        "agreement_pct": round(agree / len(lookups) * 100, 1) if lookups else None,
+        "native": _stats(native_ms),
+        "mcp": _stats(mcp_ms),
+        "mcp_startup_ms": startup_ms,
+    }
 
-    print("=" * 68)
-    print("      BENCHMARK COMPARISON: NATIVE LOOKUP vs MCP PROTOCOL")
-    print("=" * 68)
-    print(f"| Metric                      | Native Direct Tool | MCP Tool Server |")
-    print(f"|-----------------------------|--------------------|-----------------|")
-    print(f"| Lookups Evaluated           | {total:<18} | {total:<15} |")
-    print(f"| Lookup Accuracy (%)         | {(native_correct/total*100):.1f}%{'':<13} | {(mcp_correct/total*100):.1f}%{'':<10} |")
-    print(f"| Total Benchmark Latency     | {native_duration_ms:.2f} ms{'':<10} | {mcp_duration_ms:.2f} ms{'':<7} |")
-    print(f"| Avg Query Latency           | {(native_duration_ms/total):.2f} ms{'':<10} | {(mcp_duration_ms/total):.2f} ms{'':<7} |")
-    print(f"| Interoperability Standard   | Internal Python    | JSON-RPC (MCP)  |")
-    print("=" * 68 + "\n")
+    if verbose:
+        n, m = results["native"], results["mcp"]
+        print(f"\nNative lookup vs MCP stdio server — {results['lookups']} lookups "
+              f"({results['found']} records found)\n")
+        print("| Metric                | Native (in-process) | MCP (stdio JSON-RPC) |")
+        print("|-----------------------|---------------------|----------------------|")
+        print(f"| Result agreement      | baseline            | {str(results['agreement_pct']) + '%':<20} |")
+        print(f"| Mean latency / lookup | {n['mean_ms']:>8.3f} ms         | {m['mean_ms']:>8.3f} ms          |")
+        print(f"| p50 latency           | {n['p50_ms']:>8.3f} ms         | {m['p50_ms']:>8.3f} ms          |")
+        print(f"| p95 latency           | {n['p95_ms']:>8.3f} ms         | {m['p95_ms']:>8.3f} ms          |")
+        print(f"| One-time startup      | none                | {startup_ms:>8.1f} ms          |\n")
+    return results
 
 
 if __name__ == "__main__":

@@ -43,6 +43,6 @@
 ### [01:45 - 02:00] Conclusion & Benchmark Results
 * **Visual:** Display the 50-example benchmark evaluation table.
 * **Spoken Script:**
-  > *"To ensure reliability, I evaluated InboxPilot against a 50-case benchmark including adversarial prompt injections and malformed emails. The agent achieved **100% tool-selection accuracy** and **100% task completion** with zero unhandled exceptions.
+  > *"To ensure reliability, I evaluated InboxPilot against a 50-case benchmark including adversarial prompt injections and malformed emails. Every case is scored strictly, and CI blocks any regression. No prompt injection ever produced a database write, and the runner reports exactly which ambiguous cases still fail, so I know where to improve next.
   >
   > The live demo and complete codebase are available on GitHub and Render. Thank you!"*

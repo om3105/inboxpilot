@@ -1,31 +1,37 @@
 """
 tools/mcp_server.py — Model Context Protocol (MCP) server for InboxPilot.
 
-Exposes MongoDB database lookups as standard MCP tool definitions.
-This decouples database access from the core agent, allowing any MCP-compliant
-agent runtime (e.g. Claude Desktop, Cursor, LangChain MCP adapters) to interact
-with enterprise records safely.
+Exposes enterprise record lookups as an MCP tool over the stdio transport
+(newline-delimited JSON-RPC 2.0). Implements the lifecycle handshake
+(initialize / notifications/initialized), tools/list, tools/call, and ping,
+so any MCP-compliant client (e.g. Claude Desktop, Cursor, LangChain MCP
+adapters) can call it. Lookups use the same backend as the native tool
+(MongoDB Atlas with seed-data fallback).
+
+Run:  python -m tools.mcp_server
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import sys
 from typing import Any
-from scripts.seed_db import get_mock_employees, get_mock_invoices, get_mock_tickets
 
-# Cached records for MCP lookup protocol
-RECORDS = {
-    "employees": {e["employee_id"]: e for e in get_mock_employees()},
-    "invoices": {i["invoice_number"]: i for i in get_mock_invoices()},
-    "tickets": {t["ticket_id"]: t for t in get_mock_tickets()},
-}
+from tools.lookup_record import lookup_record
+
+# stdout carries protocol messages only; all logging goes to stderr.
+logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
+
+SERVER_INFO = {"name": "inboxpilot-records", "version": "1.0.0"}
+DEFAULT_PROTOCOL_VERSION = "2025-06-18"
 
 TOOLS = [
     {
-        "name": "mcp_lookup_record",
-        "description": "Lookup an enterprise record in employees, invoices, or tickets by query filter",
-        "parameters": {
+        "name": "lookup_record",
+        "description": "Look up an enterprise record in employees, invoices, or tickets by a single field",
+        "inputSchema": {
             "type": "object",
             "properties": {
                 "collection": {
@@ -42,67 +48,85 @@ TOOLS = [
 ]
 
 
-def handle_lookup(collection: str, key: str, value: str) -> dict[str, Any]:
-    """Execute lookup in the target collection."""
-    coll = RECORDS.get(collection, {})
-    for doc in coll.values():
-        if str(doc.get(key, "")).lower() == str(value).lower():
-            return {"found": True, "collection": collection, "record": doc}
-    return {"found": False, "collection": collection, "record": {}}
+def _result(req_id: Any, result: dict[str, Any]) -> dict[str, Any]:
+    return {"jsonrpc": "2.0", "id": req_id, "result": result}
 
 
-def handle_request(req: dict[str, Any]) -> dict[str, Any]:
-    """Process incoming JSON-RPC protocol message."""
+def _error(req_id: Any, code: int, message: str) -> dict[str, Any]:
+    return {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}}
+
+
+async def handle_request(req: dict[str, Any]) -> dict[str, Any] | None:
+    """Process one JSON-RPC message. Returns None for notifications."""
     method = req.get("method")
     req_id = req.get("id")
 
-    if method == "tools/list":
-        return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": TOOLS}}
+    if "id" not in req:
+        return None  # notifications (e.g. notifications/initialized) get no response
 
-    elif method == "tools/call":
+    if method == "initialize":
+        params = req.get("params", {})
+        return _result(req_id, {
+            "protocolVersion": params.get("protocolVersion", DEFAULT_PROTOCOL_VERSION),
+            "capabilities": {"tools": {}},
+            "serverInfo": SERVER_INFO,
+        })
+
+    if method == "ping":
+        return _result(req_id, {})
+
+    if method == "tools/list":
+        return _result(req_id, {"tools": TOOLS})
+
+    if method == "tools/call":
         params = req.get("params", {})
         tool_name = params.get("name")
         args = params.get("arguments", {})
 
-        if tool_name == "mcp_lookup_record":
-            res = handle_lookup(
-                collection=args.get("collection", ""),
-                key=args.get("key", ""),
-                value=args.get("value", ""),
-            )
-            return {
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "result": {"content": [{"type": "text", "text": json.dumps(res)}]},
-            }
-        else:
-            return {
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "error": {"code": -32601, "message": f"Tool '{tool_name}' not found"},
-            }
+        if tool_name != "lookup_record":
+            return _error(req_id, -32602, f"Unknown tool: {tool_name}")
+        missing = [k for k in ("collection", "key", "value") if not args.get(k)]
+        if missing:
+            return _error(req_id, -32602, f"Missing required arguments: {missing}")
 
-    return {
-        "jsonrpc": "2.0",
-        "id": req_id,
-        "error": {"code": -32600, "message": f"Unsupported method: {method}"},
-    }
+        res = await lookup_record(args["collection"], {args["key"]: args["value"]})
+        return _result(req_id, {
+            "content": [{"type": "text", "text": res.model_dump_json()}],
+            "isError": False,
+        })
+
+    return _error(req_id, -32601, f"Method not found: {method}")
 
 
-def main():
-    """Run MCP server over stdio."""
-    for line in sys.stdin:
+def _write(msg: dict[str, Any]) -> None:
+    sys.stdout.write(json.dumps(msg, default=str) + "\n")
+    sys.stdout.flush()
+
+
+async def serve() -> None:
+    """Read newline-delimited JSON-RPC from stdin until EOF."""
+    loop = asyncio.get_running_loop()
+    while True:
+        line = await loop.run_in_executor(None, sys.stdin.readline)
+        if not line:
+            break
         if not line.strip():
             continue
         try:
             req = json.loads(line)
-            resp = handle_request(req)
-            sys.stdout.write(json.dumps(resp) + "\n")
-            sys.stdout.flush()
+        except json.JSONDecodeError as exc:
+            _write(_error(None, -32700, f"Parse error: {exc}"))
+            continue
+        try:
+            resp = await handle_request(req)
         except Exception as exc:
-            err = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": str(exc)}}
-            sys.stdout.write(json.dumps(err) + "\n")
-            sys.stdout.flush()
+            resp = _error(req.get("id"), -32603, f"Internal error: {exc}")
+        if resp is not None:
+            _write(resp)
+
+
+def main():
+    asyncio.run(serve())
 
 
 if __name__ == "__main__":
