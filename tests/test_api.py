@@ -162,3 +162,11 @@ def test_dashboard_has_no_prefilled_token_or_alerts():
     assert 'value="change-me' not in HTML_CONTENT
     assert "alert(" not in HTML_CONTENT
     assert 'id="errorBanner"' in HTML_CONTENT
+
+
+def test_dashboard_is_plain_and_wired_to_real_endpoints():
+    from app.ui import HTML_CONTENT
+    for emoji in ("📥", "📝", "✉", "✨", "🚀"):
+        assert emoji not in HTML_CONTENT
+    for endpoint in ('fetch("/samples")', 'callApi("/process"', "/runs/${currentRunId}/"):
+        assert endpoint in HTML_CONTENT
