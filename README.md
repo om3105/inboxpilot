@@ -23,7 +23,7 @@ graph TD
     Classify --> Lookup[2. Record Lookup: MongoDB Atlas / MCP]
     Lookup --> Decide{3. Decision Engine}
     
-    Decide -->|Unknown / Missing ID / Discrepancy| DeadLetter[Needs Human Review State]
+    Decide -->|Unknown / Injection / Missing ID / Discrepancy| DeadLetter[Needs Human Review State]
     Decide -->|Record Verified| Draft[4. Draft Response Generator]
     
     Draft --> Gate{5. Human Approval Gate: LangGraph interrupt}
@@ -52,12 +52,12 @@ Evaluated against a curated 50-example labelled benchmark (`evals/dataset.json`)
 | Metric | Score | What it checks |
 |:-------|:-----:|:---------------|
 | **Classification Accuracy** | **92.0%** | `document_type` matches the label |
-| **Tool-Selection Accuracy** | **84.0%** | Tool trace matches the expected sequence exactly |
+| **Tool-Selection Accuracy** | **100.0%** | Tool trace matches the expected sequence exactly |
 | **Field-Extraction Accuracy** | **100.0%** | Each labelled field (IDs, leave type, …) |
 | **Decision Accuracy** | **100.0%** | Proposed write, or safe no-op / human review, matches the label |
-| **Heuristic Draft Score** | **84.5%** | Rule-based tone, grounding, and injection-leak check (not an LLM judge) |
+| **Heuristic Draft Score** | **87.3%** | Rule-based tone, grounding, and injection-leak check (not an LLM judge) |
 
-Known offline failures: ambiguous wording without keywords ("Need time off next month") is classified `unknown`; irrelevant mail still gets a drafted reply; one role-play injection is classified as an invoice (no write is proposed). Run `python -m evals.runner` with `GEMINI_API_KEY` set to score the live model on the same dataset.
+Known offline failures (4): ambiguous wording without keywords ("Need time off next month") is classified `unknown` by the offline heuristic, and one role-play injection is classified as an invoice. All four still route safely to human review: unclassifiable mail and inputs matching prompt-injection patterns never get an automated write or reply. Run `python -m evals.runner` with `GEMINI_API_KEY` set to score the live model on the same dataset.
 
 ### Benchmark Comparison: Native Tool vs MCP Server
 `tools/mcp_server.py` exposes record lookups as an MCP tool over the stdio transport (JSON-RPC 2.0 with the `initialize` handshake, `tools/list`, `tools/call`). `tools/mcp_client.py` spawns it as a subprocess, so every MCP lookup crosses a real process and protocol boundary. Both paths share the same lookup backend, so the comparison isolates protocol cost:

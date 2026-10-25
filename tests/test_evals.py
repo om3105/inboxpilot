@@ -3,7 +3,7 @@ tests/test_evals.py — Regression gate for the offline evaluation benchmark.
 
 Thresholds are floors at the current offline baseline: they catch regressions,
 they are not claims about live-model accuracy. Known failing cases (ambiguous
-wording, irrelevant mail getting a drafted reply, one injection classified as
+wording the offline heuristic cannot classify, one injection classified as
 an invoice) are printed by the runner.
 """
 
@@ -12,10 +12,10 @@ from evals.runner import heuristic_draft_score, run_benchmark
 
 THRESHOLDS = {
     "classification_accuracy": 92.0,
-    "tool_selection_accuracy": 84.0,
+    "tool_selection_accuracy": 100.0,
     "field_extraction_accuracy": 100.0,
     "decision_accuracy": 100.0,
-    "heuristic_draft_score": 80.0,
+    "heuristic_draft_score": 87.0,
 }
 
 

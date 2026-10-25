@@ -156,6 +156,7 @@ class AgentState(TypedDict, total=False):
     # Classification & extraction
     document_type: str                # DocumentType value
     extracted: dict[str, Any]         # ExtractedEmail.model_dump()
+    security_flags: list[str]         # prompt-injection patterns found in raw input
 
     # Lookup
     lookup_result: dict[str, Any]     # LookupResult.model_dump()
