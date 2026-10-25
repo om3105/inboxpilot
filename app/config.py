@@ -26,6 +26,10 @@ class Settings(BaseSettings):
         default="gemini-3.5-flash",
         description="Model identifier passed to the LLM provider",
     )
+    llm_max_rpm: int = Field(
+        default=0,
+        description="Max live LLM requests per minute (0 = unlimited; free tier is 5)",
+    )
 
     # ── MongoDB ───────────────────────────────────────────────
     mongodb_uri: str = Field(
