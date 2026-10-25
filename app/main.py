@@ -30,7 +30,7 @@ from langgraph.types import Command
 from app.config import get_settings
 from app.database import close_database
 from app.models import RunStatus
-from app.telemetry import trace_agent_run
+from app.telemetry import shutdown_telemetry, trace_agent_run
 from agent.checkpointer import get_agent
 
 logging.basicConfig(level=logging.INFO)
@@ -47,6 +47,7 @@ async def lifespan(app: FastAPI):
     yield
     logger.info("InboxPilot API shutting down, closing database...")
     await close_database()
+    shutdown_telemetry()
 
 
 app = FastAPI(
@@ -177,8 +178,9 @@ async def process_document(request: Request, payload: ProcessRequest):
 
     async with trace_agent_run(run_id=run_id, input_type=payload.input_source) as trace_meta:
         # Run agent until completion or interruption
-        await agent.ainvoke(initial_state, config=config)
+        await agent.ainvoke(initial_state, config={**config, "callbacks": trace_meta["callbacks"]})
         state = await agent.aget_state(config)
+        trace_meta["status"] = state.values.get("status")
 
     values = state.values
     is_paused = state.next == ("human_approval_gate",)
@@ -259,9 +261,11 @@ async def approve_run(request: Request, run_id: str):
 
     # Resume the graph
     resume_cmd = Command(resume={"decision": "approve"})
-    await agent.ainvoke(resume_cmd, config=config)
+    async with trace_agent_run(run_id=run_id, input_type="resume", stage="approve") as trace_meta:
+        await agent.ainvoke(resume_cmd, config={**config, "callbacks": trace_meta["callbacks"]})
+        updated_state = await agent.aget_state(config)
+        trace_meta["status"] = updated_state.values.get("status")
 
-    updated_state = await agent.aget_state(config)
     values = updated_state.values
 
     return ProcessResponse(
@@ -308,9 +312,11 @@ async def reject_run(request: Request, run_id: str, payload: RejectRequest | Non
 
     reason = payload.reason if payload else "Rejected by operator"
     resume_cmd = Command(resume={"decision": "reject", "reason": reason})
-    await agent.ainvoke(resume_cmd, config=config)
+    async with trace_agent_run(run_id=run_id, input_type="resume", stage="reject") as trace_meta:
+        await agent.ainvoke(resume_cmd, config={**config, "callbacks": trace_meta["callbacks"]})
+        updated_state = await agent.aget_state(config)
+        trace_meta["status"] = updated_state.values.get("status")
 
-    updated_state = await agent.aget_state(config)
     values = updated_state.values
 
     return ProcessResponse(

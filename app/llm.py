@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 from typing import Any, Type, TypeVar
 from pydantic import BaseModel
@@ -37,7 +36,7 @@ class LLMProvider:
     def __init__(self, model_name: str | None = None, api_key: str | None = None):
         settings = get_settings()
         self.model_name = model_name or settings.llm_model_name
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
+        self.api_key = api_key or settings.gemini_api_key
 
     def is_live_available(self) -> bool:
         """Check if a real API key is configured."""

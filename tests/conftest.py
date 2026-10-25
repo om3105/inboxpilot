@@ -1,5 +1,13 @@
+import os
+
 import pytest
 from tools.lookup_record import reset_mock_store
+
+# Env vars take precedence over .env in pydantic-settings; keep tests offline,
+# deterministic, and from exporting traces to the real Langfuse project.
+os.environ["GEMINI_API_KEY"] = ""
+os.environ["LANGFUSE_PUBLIC_KEY"] = ""
+os.environ["LANGFUSE_SECRET_KEY"] = ""
 
 
 @pytest.fixture(autouse=True)

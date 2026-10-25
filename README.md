@@ -45,25 +45,30 @@ graph TD
 
 ## 📊 Evaluation & Benchmark Results
 
-Evaluated against a curated 50-example ground-truth benchmark (`evals/dataset.json`) covering standard traffic, missing fields, ambiguous wording, out-of-range balances, and adversarial prompt-injection attempts.
+Evaluated against a curated 50-example labelled benchmark (`evals/dataset.json`) covering standard traffic, missing fields, ambiguous wording, out-of-range balances, irrelevant mail, and adversarial prompt-injection attempts. Every metric is scored strictly per case, and the runner prints each failing case with the reason.
 
-| Benchmark Metric | Score | Industry Target | Status |
-|:-----------------|:-----:|:---------------:|:------:|
-| **Tool-Selection Accuracy** | **100.0%** | > 90% | ✅ Passed |
-| **Field-Extraction Accuracy** | **100.0%** | > 90% | ✅ Passed |
-| **Task Completion / Decision Rate** | **100.0%** | > 85% | ✅ Passed |
-| **LLM-as-a-Judge Draft Quality** | **84.5%** | > 80% | ✅ Passed |
-| **Total Test Scenarios** | **50 cases** | 50 cases | ✅ Passed |
+**Offline mode** (deterministic heuristic extractor, no API key; this is what CI runs as a regression gate, not a measure of LLM quality):
 
-### Benchmark Comparison: Native Tool vs MCP Tool Server
-We implemented an extension replacing direct database lookups with a standard **Model Context Protocol (MCP)** JSON-RPC server (`tools/mcp_server.py`):
+| Metric | Score | What it checks |
+|:-------|:-----:|:---------------|
+| **Classification Accuracy** | **92.0%** | `document_type` matches the label |
+| **Tool-Selection Accuracy** | **84.0%** | Tool trace matches the expected sequence exactly |
+| **Field-Extraction Accuracy** | **100.0%** | Each labelled field (IDs, leave type, …) |
+| **Decision Accuracy** | **100.0%** | Proposed write, or safe no-op / human review, matches the label |
+| **Heuristic Draft Score** | **84.5%** | Rule-based tone, grounding, and injection-leak check (not an LLM judge) |
 
-| Evaluation Metric | Native Python Tool | MCP Server (`tools/mcp_server.py`) |
-|:------------------|:------------------:|:----------------------------------:|
-| **Lookups Evaluated** | 40 queries | 40 queries |
-| **Lookup Accuracy** | **95.0%** | **95.0%** |
-| **Avg Query Latency** | ~1.0 ms | < 0.1 ms |
-| **Standard** | Internal Python function | Protocol-agnostic JSON-RPC |
+Known offline failures: ambiguous wording without keywords ("Need time off next month") is classified `unknown`; irrelevant mail still gets a drafted reply; one role-play injection is classified as an invoice (no write is proposed). Run `python -m evals.runner` with `GEMINI_API_KEY` set to score the live model on the same dataset.
+
+### Benchmark Comparison: Native Tool vs MCP Server
+`tools/mcp_server.py` exposes record lookups as an MCP tool over the stdio transport (JSON-RPC 2.0 with the `initialize` handshake, `tools/list`, `tools/call`). `tools/mcp_client.py` spawns it as a subprocess, so every MCP lookup crosses a real process and protocol boundary. Both paths share the same lookup backend, so the comparison isolates protocol cost:
+
+| Metric (40 lookups) | Native (in-process) | MCP (stdio JSON-RPC) |
+|:--------------------|:-------------------:|:--------------------:|
+| **Result agreement** | baseline | **100%** |
+| **p50 latency / lookup** | ~25 ms | ~24 ms |
+| **One-time server startup** | none | ~170 ms |
+
+Per-lookup latency is dominated by the backend (local run, Atlas unreachable, falling back to seed data), so the JSON-RPC round trip adds no measurable per-call overhead; the cost of MCP is the one-time process spawn and handshake.
 
 ---
 
@@ -87,11 +92,11 @@ We implemented an extension replacing direct database lookups with a standard **
 │   ├── lookup_record.py  # MongoDB Atlas read queries
 │   ├── draft_reply.py    # LLM operational response drafter
 │   ├── apply_update.py   # High-risk write tool (requires human sign-off)
-│   ├── mcp_server.py     # Model Context Protocol (MCP) server
-│   └── mcp_client.py     # MCP client adapter
+│   ├── mcp_server.py     # MCP stdio server (JSON-RPC 2.0)
+│   └── mcp_client.py     # MCP stdio client (spawns the server)
 ├── evals/
-│   ├── dataset.json      # 50 ground-truth examples & edge cases
-│   ├── runner.py         # Benchmark suite & Markdown results formatter
+│   ├── dataset.json      # 50 labelled examples & edge cases
+│   ├── runner.py         # Strict per-case scoring + failure report
 │   └── compare_mcp.py    # Native DB vs MCP comparative benchmark
 ├── tests/
 │   ├── test_models.py    # Domain model validation & serialization tests
