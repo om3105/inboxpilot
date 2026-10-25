@@ -26,7 +26,7 @@ import time
 from typing import Any
 
 from agent.graph import build_agent_graph
-from app.llm import FALLBACK_COUNTS, LLMProvider
+from app.llm import FALLBACK_COUNTS, PROVIDER_COUNTS, LLMProvider
 from app.models import RunStatus
 
 logger = logging.getLogger("inboxpilot.evals")
@@ -118,6 +118,7 @@ async def run_benchmark(
     case_cache: dict[str, Any] = cache.setdefault(cache_key, {})
     for k in FALLBACK_COUNTS:
         FALLBACK_COUNTS[k] = 0
+    PROVIDER_COUNTS.clear()
     agent = build_agent_graph()
 
     dataset_size = len(cases)
@@ -233,6 +234,8 @@ async def run_benchmark(
         "drafts_scored": len(draft_scores),
         # Live calls that errored and silently used the offline heuristic instead
         "llm_fallbacks": dict(FALLBACK_COUNTS),
+        # Which provider answered each live call made in this run (cached cases excluded)
+        "providers_used": dict(PROVIDER_COUNTS),
         "failures": failures,
     }
 
@@ -262,7 +265,9 @@ def print_results_table(results: dict[str, Any]):
 
     fb = results["llm_fallbacks"]
     if results["mode"] == "live":
-        print(f"\nLLM fallbacks to heuristic: {fb['extract']} extractions, {fb['draft']} drafts"
+        used = ", ".join(f"{k}={v}" for k, v in results["providers_used"].items()) or "none (all cached)"
+        print(f"\nLive calls answered by: {used}")
+        print(f"LLM fallbacks to heuristic: {fb['extract']} extractions, {fb['draft']} drafts"
               + (" (these cases were NOT scored on the live model)" if any(fb.values()) else ""))
 
     if results["failures"]:

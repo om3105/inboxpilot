@@ -58,7 +58,7 @@ async def test_cache_resumes_completed_cases(tmp_path):
 async def test_live_run_stops_without_scoring_fallbacks(tmp_path, monkeypatch):
     from app.llm import LLMProvider
 
-    def quota_exhausted(self, temperature):
+    def quota_exhausted(self, *args, **kwargs):
         raise RuntimeError("429 RESOURCE_EXHAUSTED")
 
     monkeypatch.setattr(LLMProvider, "is_live_available", lambda self: True)
