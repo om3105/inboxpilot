@@ -31,6 +31,9 @@ def get_checkpointer():
 
     settings = get_settings()
     uri = settings.mongodb_uri
+    if settings.demo_public:
+        # Public demo: keep visitors' run state out of the real database.
+        uri = ""
 
     if uri and ("mongodb+srv://" in uri or "mongodb://" in uri) and not uri.startswith("mongodb://test"):
         try:

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from app.config import get_settings
 from app.models import DocumentType, LookupResult
 from scripts.seed_db import get_mock_employees, get_mock_invoices, get_mock_tickets
 
@@ -52,33 +53,35 @@ async def lookup_record(
             message="No target collection specified for lookup",
         )
 
-    # 1. Try live MongoDB
-    try:
-        from app.database import get_database
-        db = get_database()
-        coll = db[collection]
-        record = await coll.find_one(query)
-        if record:
-            # Clean Mongo _id for JSON serializability
-            clean_rec = dict(record)
-            if "_id" in clean_rec:
-                clean_rec["_id"] = str(clean_rec["_id"])
+    # 1. Try live MongoDB, except in public demo mode: the demo sandbox never
+    #    reads or writes the real database.
+    if not get_settings().demo_public:
+        try:
+            from app.database import get_database
+            db = get_database()
+            coll = db[collection]
+            record = await coll.find_one(query)
+            if record:
+                # Clean Mongo _id for JSON serializability
+                clean_rec = dict(record)
+                if "_id" in clean_rec:
+                    clean_rec["_id"] = str(clean_rec["_id"])
+                return LookupResult(
+                    found=True,
+                    collection=collection,
+                    record=clean_rec,
+                    message=f"Record found in {collection}",
+                )
+            # Live query succeeded with no match: don't fall back to mock data,
+            # or the agent could approve writes against records that don't exist.
             return LookupResult(
-                found=True,
+                found=False,
                 collection=collection,
-                record=clean_rec,
-                message=f"Record found in {collection}",
+                record={},
+                message=f"No record matching {query} found in {collection}",
             )
-        # Live query succeeded with no match: don't fall back to mock data,
-        # or the agent could approve writes against records that don't exist.
-        return LookupResult(
-            found=False,
-            collection=collection,
-            record={},
-            message=f"No record matching {query} found in {collection}",
-        )
-    except Exception as exc:
-        logger.info("Live MongoDB lookup unavailable or timed out (%s); querying mock seed cache.", exc)
+        except Exception as exc:
+            logger.info("Live MongoDB lookup unavailable or timed out (%s); querying mock seed cache.", exc)
 
     # 2. Resilient fallback to mock cache
     cache = MOCK_STORE.get(collection, {})

@@ -31,5 +31,7 @@ services:
         sync: false
       - key: LANGFUSE_HOST
         value: https://cloud.langfuse.com
+      - key: DEMO_PUBLIC
+        value: "true"
       - key: DEMO_TOKEN
         generateValue: true

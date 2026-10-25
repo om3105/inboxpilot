@@ -87,6 +87,10 @@ HTML_CONTENT = r"""<!DOCTYPE html>
   .key-field input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
   .key-state { width: 7px; height: 7px; border-radius: 50%; background: var(--line-strong); }
   .key-state.ok { background: var(--accent); }
+  .demo-note { display: none; font-size: 12px; color: var(--ink-3); }
+  .demo-note b { color: var(--accent); font-weight: 600; }
+  body.demo-public .demo-note { display: block; }
+  body.demo-public .key-field { display: none; }
 
   .error-banner {
     display: none;
@@ -285,6 +289,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
 <header class="topbar">
   <div class="brand">InboxPilot<small>ops inbox · every write needs a human yes</small></div>
   <div class="spacer"></div>
+  <div class="demo-note"><b>Public demo</b> · approvals change a sandbox copy of the sample data, never a real database</div>
   <label class="key-field" title="Agent endpoints require the X-Demo-Token header">
     <span class="key-state" id="keyState"></span>
     <span>Access key</span>
@@ -320,7 +325,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
     <div class="pane-head"><h2>Agent review</h2><span id="statusPill" class="status" style="display:none"><span id="statusPillText"></span></span></div>
     <div id="reviewEmpty" class="empty">
       Nothing reviewed yet.<br><br>
-      Pick a message and press <strong>Run agent</strong>. Nothing is written to the database until you approve it here.
+      Pick a message and press <strong>Run agent</strong>. Nothing is written until you approve it here.
     </div>
     <div id="reviewBody" class="review-inner" style="display:none">
       <div class="block" id="changeBlock">
@@ -373,6 +378,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
     body: "Hi team,\n\nI'd like to take sick leave on 2024-11-12. My employee ID is EMP002.\n\nThanks,\nPriya",
   };
   let messages = [];
+  let demoPublic = false;
   let current = null;
   let currentRunId = null;
   const runsByMessage = {};
@@ -528,10 +534,12 @@ HTML_CONTENT = r"""<!DOCTYPE html>
   // ── API ──────────────────────────────────────────────────
   async function callApi(path, body) {
     const token = $("demoToken").value.trim();
-    if (!token) throw new Error("Paste the access key (DEMO_TOKEN) in the top right first.");
+    if (!token && !demoPublic) throw new Error("Paste the access key (DEMO_TOKEN) in the top right first.");
+    const headers = { "Content-Type": "application/json" };
+    if (token) headers["X-Demo-Token"] = token;
     const res = await fetch(path, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Demo-Token": token },
+      headers,
       body: JSON.stringify(body),
     });
     let data = {};
@@ -659,7 +667,9 @@ HTML_CONTENT = r"""<!DOCTYPE html>
     setDecisionEnabled(awaiting);
 
     const outcomes = {
-      completed: hasChange ? "Approved. The change has been written to the database." : "No approval was needed.",
+      completed: hasChange
+        ? (demoPublic ? "Approved. The change was applied to the demo sandbox." : "Approved. The change has been written to the database.")
+        : "No approval was needed.",
       rejected: "Rejected. Nothing was written.",
       needs_human_review: data.error ? `Why: ${data.error}` : "",
       failed: data.error ? `The update did not go through: ${data.error}` : "The update did not go through.",
@@ -724,7 +734,16 @@ HTML_CONTENT = r"""<!DOCTYPE html>
     if (e.key === "r" && !$("rejectBtn").disabled) handleDecision("reject");
   });
 
+  async function loadConfig() {
+    try {
+      const res = await fetch("/config");
+      if (res.ok) demoPublic = !!(await res.json()).demo_public;
+    } catch (_) { /* assume a key is required */ }
+    document.body.classList.toggle("demo-public", demoPublic);
+  }
+
   loadKey();
+  loadConfig();
   loadInbox();
 </script>
 </body>

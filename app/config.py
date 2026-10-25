@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     )
 
     # ── API Security ──────────────────────────────────────────
+    demo_public: bool = Field(
+        default=False,
+        description="Public demo: no token needed; lookups, approvals, and run state stay in an in-memory sandbox",
+    )
     demo_token: str = Field(
         default="",
         description="Token required in X-Demo-Token for agent endpoints; empty disables them",
