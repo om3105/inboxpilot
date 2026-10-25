@@ -49,6 +49,7 @@ from tools.extract_fields import extract_fields
 from tools.lookup_record import lookup_record
 from tools.draft_reply import draft_reply
 from tools.apply_update import apply_update
+from tools.send_reply import send_reply
 
 logger = logging.getLogger("inboxpilot.agent")
 
@@ -356,11 +357,22 @@ async def execute_update_node(state: AgentState) -> dict[str, Any]:
             "tool_trace": trace,
         }
 
-    return {
+    update: dict[str, Any] = {
         "status": RunStatus.COMPLETED.value,
         "update_result": result,
         "tool_trace": trace,
     }
+
+    # Runs that came from a real mailbox get their approved reply sent
+    # (only if enabled, and never in public demo mode; see tools/send_reply.py).
+    source = state.get("source_message")
+    if source:
+        reply = await send_reply(state.get("draft_reply") or {}, source)
+        update["reply_result"] = reply
+        if reply.get("sent"):
+            trace.append("send_reply")
+
+    return update
 
 
 async def handle_rejection_node(state: AgentState) -> dict[str, Any]:

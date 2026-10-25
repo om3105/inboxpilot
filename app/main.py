@@ -100,10 +100,20 @@ def verify_demo_token(x_demo_token: str | None = Header(default=None, alias="X-D
 # ── Request / Response Schemas ────────────────────────────────────────────────
 
 
+class SourceMessage(BaseModel):
+    """The real email a run came from, so an approved reply can be threaded onto it."""
+    message_id: str = Field(default="", description="Original Message-ID header")
+    from_address: str = Field(..., description="Address the reply goes to")
+    subject: str = Field(default="", description="Original subject line")
+
+
 class ProcessRequest(BaseModel):
     raw_input: str = Field(..., description="Email body, raw .eml, or document text")
     input_source: Literal["email", "pdf", "text"] = Field(
         default="email", description="Input document format"
+    )
+    source_message: SourceMessage | None = Field(
+        default=None, description="Set by the mailbox poller for real email"
     )
 
 
@@ -122,6 +132,7 @@ class ProcessResponse(BaseModel):
     requires_approval: bool = False
     message: str = ""
     error: str | None = None
+    reply_result: dict[str, Any] | None = None
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -148,6 +159,18 @@ async def health_check():
         "service": "inboxpilot",
         "version": "1.0.0",
     }
+
+
+# Real-mail runs submitted by the mailbox poller, newest first. Kept in memory:
+# the run state itself lives in the checkpointer, this is just the inbox index.
+_REAL_INBOX: list[dict[str, Any]] = []
+_REAL_INBOX_LIMIT = 200
+
+
+@app.get("/inbox", dependencies=[Depends(verify_demo_token)], tags=["Agent"])
+async def real_inbox():
+    """Emails that arrived from the real mailbox, each with the run it started."""
+    return {"messages": _REAL_INBOX}
 
 
 @app.get("/samples", tags=["Samples"])
@@ -192,6 +215,8 @@ async def process_document(request: Request, payload: ProcessRequest):
         "tool_trace": [],
         "status": RunStatus.PROCESSING.value,
     }
+    if payload.source_message:
+        initial_state["source_message"] = payload.source_message.model_dump()
 
     async with trace_agent_run(run_id=run_id, input_type=payload.input_source) as trace_meta:
         # Run agent until completion or interruption
@@ -204,6 +229,10 @@ async def process_document(request: Request, payload: ProcessRequest):
 
     current_status = RunStatus.AWAITING_APPROVAL.value if is_paused else values.get("status", RunStatus.COMPLETED.value)
 
+    if payload.source_message:
+        _REAL_INBOX.insert(0, {"run_id": run_id, "raw": payload.raw_input, **payload.source_message.model_dump()})
+        del _REAL_INBOX[_REAL_INBOX_LIMIT:]
+
     return ProcessResponse(
         run_id=run_id,
         status=current_status,
@@ -213,6 +242,7 @@ async def process_document(request: Request, payload: ProcessRequest):
         draft_reply=values.get("draft_reply"),
         tool_trace=values.get("tool_trace", []),
         error=values.get("error"),
+        reply_result=values.get("reply_result"),
         requires_approval=is_paused,
         message=(
             "Action requires human approval before execution."
@@ -253,6 +283,7 @@ async def get_run_status(run_id: str):
         draft_reply=values.get("draft_reply"),
         tool_trace=values.get("tool_trace", []),
         error=values.get("error"),
+        reply_result=values.get("reply_result"),
         requires_approval=is_paused,
         message="Awaiting approval" if is_paused else f"Run status: {current_status}",
     )
@@ -301,6 +332,7 @@ async def approve_run(request: Request, run_id: str):
         draft_reply=values.get("draft_reply"),
         tool_trace=values.get("tool_trace", []),
         error=values.get("error"),
+        reply_result=values.get("reply_result"),
         requires_approval=False,
         message=(
             "Proposed action approved and successfully executed."
@@ -353,6 +385,7 @@ async def reject_run(request: Request, run_id: str, payload: RejectRequest | Non
         draft_reply=values.get("draft_reply"),
         tool_trace=values.get("tool_trace", []),
         error=values.get("error"),
+        reply_result=values.get("reply_result"),
         requires_approval=False,
         message=f"Action rejected: {reason}",
     )
