@@ -23,8 +23,16 @@ class Settings(BaseSettings):
         default="", description="Google Gemini API key"
     )
     llm_model_name: str = Field(
-        default="gemini-2.0-flash",
+        default="gemini-3.5-flash",
         description="Model identifier passed to the LLM provider",
+    )
+    llm_max_rpm: int = Field(
+        default=0,
+        description="Max live LLM requests per minute (0 = unlimited; free tier is 5)",
+    )
+    llm_live_drafts: bool = Field(
+        default=True,
+        description="Use the LLM for draft replies; false uses templates and halves LLM calls",
     )
 
     # ── MongoDB ───────────────────────────────────────────────
