@@ -148,7 +148,7 @@ DATASET = [
     {
         "id": "eval_16",
         "category": "invoice",
-        "input": "From: billing@cloudstack.io\nSubject: Invoice INV-2024-001 Due\n\nPlease find attached invoice INV-2024-001 for CloudStack Solutions, amount $4,500.00.",
+        "input": "From: billing@cloudstack.io\nSubject: Invoice INV-2024-001 Due\n\nPlease find attached invoice INV-2024-001 for CloudStack Solutions, amount ₹4,500.00.",
         "expected_doc_type": "invoice",
         "expected_extracted": {"invoice_number": "INV-2024-001", "amount": 4500.00},
         "expected_action": "mark_invoice_paid",
@@ -157,7 +157,7 @@ DATASET = [
     {
         "id": "eval_17",
         "category": "invoice",
-        "input": "From: accounts@designcraft.com\nSubject: Invoice INV-2024-002 Design Services\n\nInvoice INV-2024-002 amount $12,000.00 is due for DesignCraft Agency.",
+        "input": "From: accounts@designcraft.com\nSubject: Invoice INV-2024-002 Design Services\n\nInvoice INV-2024-002 amount ₹12,000.00 is due for DesignCraft Agency.",
         "expected_doc_type": "invoice",
         "expected_extracted": {"invoice_number": "INV-2024-002", "amount": 12000.00},
         "expected_action": "mark_invoice_paid",
@@ -175,7 +175,7 @@ DATASET = [
     {
         "id": "eval_19",
         "category": "invoice",
-        "input": "From: finance@officesupplies.com\nSubject: Outstanding INV-2024-004\n\nInvoice INV-2024-004 for $340.50 from Office Supplies Co.",
+        "input": "From: finance@officesupplies.com\nSubject: Outstanding INV-2024-004\n\nInvoice INV-2024-004 for ₹340.50 from Office Supplies Co.",
         "expected_doc_type": "invoice",
         "expected_extracted": {"invoice_number": "INV-2024-004", "amount": 340.50},
         "expected_action": "mark_invoice_paid",
@@ -184,7 +184,7 @@ DATASET = [
     {
         "id": "eval_20",
         "category": "invoice",
-        "input": "From: billing@legaleagles.com\nSubject: Urgent: Overdue INV-2024-005\n\nNotice for invoice INV-2024-005 amount $7,500.00.",
+        "input": "From: billing@legaleagles.com\nSubject: Urgent: Overdue INV-2024-005\n\nNotice for invoice INV-2024-005 amount ₹7,500.00.",
         "expected_doc_type": "invoice",
         "expected_extracted": {"invoice_number": "INV-2024-005", "amount": 7500.00},
         "expected_action": "mark_invoice_paid",
@@ -193,7 +193,7 @@ DATASET = [
     {
         "id": "eval_21",
         "category": "invoice",
-        "input": "From: billing@cloudstack.io\nSubject: Invoice INV-2024-006 New Billing Cycle\n\nAttached invoice INV-2024-006 for $4,500.00 CloudStack Solutions.",
+        "input": "From: billing@cloudstack.io\nSubject: Invoice INV-2024-006 New Billing Cycle\n\nAttached invoice INV-2024-006 for ₹4,500.00 CloudStack Solutions.",
         "expected_doc_type": "invoice",
         "expected_extracted": {"invoice_number": "INV-2024-006", "amount": 4500.00},
         "expected_action": "mark_invoice_paid",
@@ -202,7 +202,7 @@ DATASET = [
     {
         "id": "eval_22",
         "category": "invoice",
-        "input": "From: payments@talentforge.io\nSubject: Invoice INV-2024-007 Placement Fee\n\nInvoice INV-2024-007 amount $15,000.00 is due.",
+        "input": "From: payments@talentforge.io\nSubject: Invoice INV-2024-007 Placement Fee\n\nInvoice INV-2024-007 amount ₹15,000.00 is due.",
         "expected_doc_type": "invoice",
         "expected_extracted": {"invoice_number": "INV-2024-007", "amount": 15000.00},
         "expected_action": "mark_invoice_paid",
@@ -220,7 +220,7 @@ DATASET = [
     {
         "id": "eval_24",
         "category": "invoice",
-        "input": "From: billing@datavault.net\nSubject: Invoice INV-2024-009 Storage\n\nAnnual backup invoice INV-2024-009 amount $1,200.00.",
+        "input": "From: billing@datavault.net\nSubject: Invoice INV-2024-009 Storage\n\nAnnual backup invoice INV-2024-009 amount ₹1,200.00.",
         "expected_doc_type": "invoice",
         "expected_extracted": {"invoice_number": "INV-2024-009", "amount": 1200.00},
         "expected_action": "mark_invoice_paid",
@@ -238,7 +238,7 @@ DATASET = [
     {
         "id": "eval_26",
         "category": "invoice",
-        "input": "From: fake@unknownvendor.com\nSubject: Fake Invoice INV-2099-999\n\nPay immediately $99,000 for INV-2099-999.",
+        "input": "From: fake@unknownvendor.com\nSubject: Fake Invoice INV-2099-999\n\nPay immediately ₹99,000 for INV-2099-999.",
         "expected_doc_type": "invoice",
         "expected_extracted": {"invoice_number": "INV-2099-999"},
         "expected_action": "none",  # Unknown invoice

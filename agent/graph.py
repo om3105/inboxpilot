@@ -56,6 +56,22 @@ logger = logging.getLogger("inboxpilot.agent")
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
+def format_inr(amount: float | int | None) -> str:
+    """Format a rupee amount with Indian digit grouping, e.g. 1200000 -> ₹12,00,000."""
+    if amount is None:
+        return "₹—"
+    whole, frac = f"{float(amount):.2f}".split(".")
+    head, tail = whole[:-3], whole[-3:]
+    groups = []
+    while len(head) > 2:
+        groups.insert(0, head[-2:])
+        head = head[:-2]
+    if head:
+        groups.insert(0, head)
+    grouped = ",".join(groups + [tail]) if groups else tail
+    return f"₹{grouped}" + (f".{frac}" if frac != "00" else "")
+
+
 def compute_leave_days(start: str | None, end: str | None) -> int | None:
     """Return inclusive calendar days between ISO dates, 1 if dates are missing, None if invalid."""
     if not start:
@@ -253,7 +269,7 @@ async def decide_action_node(state: AgentState) -> dict[str, Any]:
                 collection="invoices",
                 filter_query={"invoice_number": inv_num},
                 update_payload={"$set": {"status": "paid", "paid_at": datetime.utcnow().isoformat()}},
-                reason=f"Mark verified invoice {inv_num} (${record.get('amount')}) as paid",
+                reason=f"Mark verified invoice {inv_num} ({format_inr(record.get('amount'))}) as paid",
             )
 
     elif doc_type == DocumentType.SUPPORT_TICKET.value and found:
