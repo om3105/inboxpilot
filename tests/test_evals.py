@@ -41,3 +41,32 @@ def test_draft_score_flags_injection_by_whole_word_only():
 
 def test_draft_score_empty_is_zero():
     assert heuristic_draft_score({}, {}) == 0.0
+
+
+@pytest.mark.asyncio
+async def test_cache_resumes_completed_cases(tmp_path):
+    cache = str(tmp_path / "cache.json")
+    first = await run_benchmark("evals/dataset.json", limit=5, verbose=False, cache_path=cache)
+    assert first["complete"] and first["cached_cases"] == 0
+
+    second = await run_benchmark("evals/dataset.json", limit=5, verbose=False, cache_path=cache)
+    assert second["cached_cases"] == 5
+    assert second["tool_selection_accuracy"] == first["tool_selection_accuracy"]
+
+
+@pytest.mark.asyncio
+async def test_live_run_stops_without_scoring_fallbacks(tmp_path, monkeypatch):
+    from app.llm import LLMProvider
+
+    def quota_exhausted(self, temperature):
+        raise RuntimeError("429 RESOURCE_EXHAUSTED")
+
+    monkeypatch.setattr(LLMProvider, "is_live_available", lambda self: True)
+    monkeypatch.setattr(LLMProvider, "_chat_model", quota_exhausted)
+
+    cache = str(tmp_path / "cache.json")
+    results = await run_benchmark("evals/dataset.json", verbose=False, cache_path=cache)
+    assert results["mode"] == "live"
+    assert results["total_cases"] == 0
+    assert results["complete"] is False
+    assert not (tmp_path / "cache.json").exists() or "eval_01" not in open(cache).read()

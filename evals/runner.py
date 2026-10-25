@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import enum
 import json
 import logging
+import os
 import re
 import time
 from typing import Any
@@ -64,6 +66,28 @@ def heuristic_draft_score(draft: dict[str, Any], context: dict[str, Any]) -> flo
     return min(max(score, 0.0), 1.0)
 
 
+# State keys needed to score a case; cached so live runs can resume across days.
+_CACHED_KEYS = ("document_type", "tool_trace", "extracted", "proposed_action", "status", "draft_reply")
+
+
+def _jsonable(obj: Any) -> Any:
+    return json.loads(json.dumps(obj, default=lambda o: o.value if isinstance(o, enum.Enum) else str(o)))
+
+
+def _load_cache(path: str | None) -> dict[str, Any]:
+    if path and os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+
+def _save_cache(path: str, cache: dict[str, Any]) -> None:
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(cache, f, indent=1)
+    os.replace(tmp, path)
+
+
 def _pct(hits: int, total: int) -> float | None:
     return round(hits / total * 100, 1) if total else None
 
@@ -72,20 +96,34 @@ async def run_benchmark(
     dataset_path: str = "evals/dataset.json",
     limit: int | None = None,
     verbose: bool = True,
+    cache_path: str | None = None,
 ) -> dict[str, Any]:
-    """Execute the benchmark and return calculated metrics plus per-case failures."""
+    """Execute the benchmark and return calculated metrics plus per-case failures.
+
+    With ``cache_path``, each completed case's state is saved and reused on the
+    next run. In live mode the run stops at the first case whose LLM call fell
+    back to the heuristic (e.g. daily quota exhausted) without scoring or caching
+    it, so a rate-limited key can finish the benchmark over several runs.
+    """
     with open(dataset_path, "r", encoding="utf-8") as f:
         cases = json.load(f)
 
     if limit:
         cases = cases[:limit]
 
-    mode = "live" if LLMProvider().is_live_available() else "offline"
+    provider = LLMProvider()
+    mode = "live" if provider.is_live_available() else "offline"
+    cache_key = f"{mode}:{provider.model_name}:{'live_drafts' if provider.live_drafts else 'template_drafts'}"
+    cache = _load_cache(cache_path)
+    case_cache: dict[str, Any] = cache.setdefault(cache_key, {})
     for k in FALLBACK_COUNTS:
         FALLBACK_COUNTS[k] = 0
     agent = build_agent_graph()
 
-    total = len(cases)
+    dataset_size = len(cases)
+    total = 0
+    cached_hits = 0
+    stopped_early = False
     class_matches = 0
     tool_matches = 0
     field_matches = 0
@@ -95,7 +133,7 @@ async def run_benchmark(
     failures: list[dict[str, Any]] = []
 
     if verbose:
-        print(f"\n🚀 Running InboxPilot Evaluation Benchmark on {total} test cases ({mode} mode)...\n")
+        print(f"\n🚀 Running InboxPilot Evaluation Benchmark on {dataset_size} test cases ({mode} mode, {cache_key})...\n")
 
     for case in cases:
         case_id = case["id"]
@@ -103,20 +141,37 @@ async def run_benchmark(
         expected_action = case.get("expected_action", "none")
         expected_tools = case.get("expected_tools", [])
 
-        thread_id = f"eval_{case_id}_{int(time.time())}"
-        config = {"configurable": {"thread_id": thread_id}}
+        if case_id in case_cache:
+            values = case_cache[case_id]
+            cached_hits += 1
+        else:
+            thread_id = f"eval_{case_id}_{int(time.time())}"
+            config = {"configurable": {"thread_id": thread_id}}
 
-        initial_state = {
-            "run_id": thread_id,
-            "raw_input": case["input"],
-            "input_source": "email",
-            "tool_trace": [],
-        }
+            initial_state = {
+                "run_id": thread_id,
+                "raw_input": case["input"],
+                "input_source": "email",
+                "tool_trace": [],
+            }
 
-        # Runs stop at the approval gate; evals never resume, so no writes occur.
-        await agent.ainvoke(initial_state, config=config)
-        state = await agent.aget_state(config)
-        values = state.values
+            fallbacks_before = sum(FALLBACK_COUNTS.values())
+            # Runs stop at the approval gate; evals never resume, so no writes occur.
+            await agent.ainvoke(initial_state, config=config)
+            state = await agent.aget_state(config)
+            values = _jsonable({k: state.values.get(k) for k in _CACHED_KEYS if k in state.values})
+
+            if mode == "live" and sum(FALLBACK_COUNTS.values()) > fallbacks_before:
+                stopped_early = True
+                if verbose:
+                    print(f"⏸  {case_id}: live LLM call failed (quota or outage); stopping. "
+                          "Rerun later to resume from this case.")
+                break
+            if cache_path:
+                case_cache[case_id] = values
+                _save_cache(cache_path, cache)
+
+        total += 1
         case_failures: list[str] = []
 
         # 1. Classification
@@ -165,7 +220,11 @@ async def run_benchmark(
 
     results = {
         "mode": mode,
+        "model": provider.model_name if mode == "live" else None,
         "total_cases": total,
+        "dataset_size": dataset_size,
+        "complete": total == dataset_size,
+        "cached_cases": cached_hits,
         "classification_accuracy": _pct(class_matches, total),
         "tool_selection_accuracy": _pct(tool_matches, total),
         "field_extraction_accuracy": _pct(field_matches, field_checks),
@@ -188,7 +247,11 @@ def _fmt(value: float | None) -> str:
 
 def print_results_table(results: dict[str, Any]):
     """Format evaluation results as a Markdown table followed by per-case failures."""
-    print(f"InboxPilot eval results — {results['total_cases']} cases, {results['mode']} mode\n")
+    scope = f"{results['total_cases']} cases" if results["complete"] else (
+        f"PARTIAL: {results['total_cases']}/{results['dataset_size']} cases scored so far"
+    )
+    model = f", {results['model']}" if results["model"] else ""
+    print(f"InboxPilot eval results — {scope}, {results['mode']} mode{model}\n")
     print("| Metric                    | Score  |")
     print("|---------------------------|--------|")
     print(f"| Classification Accuracy   | {_fmt(results['classification_accuracy']):<6} |")
@@ -213,5 +276,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the InboxPilot eval benchmark.")
     parser.add_argument("--dataset", default="evals/dataset.json")
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--cache",
+        default=None,
+        help="JSON file to save/resume per-case results (use for rate-limited live runs)",
+    )
     args = parser.parse_args()
-    asyncio.run(run_benchmark(args.dataset, args.limit))
+    asyncio.run(run_benchmark(args.dataset, args.limit, cache_path=args.cache))

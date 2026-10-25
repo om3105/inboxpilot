@@ -58,6 +58,7 @@ class LLMProvider:
         self.model_name = model_name or settings.llm_model_name
         self.api_key = api_key or settings.gemini_api_key
         self.max_rpm = settings.llm_max_rpm
+        self.live_drafts = settings.llm_live_drafts
 
     def is_live_available(self) -> bool:
         """Check if a real API key is configured."""
@@ -102,7 +103,7 @@ class LLMProvider:
 
     async def generate_draft(self, context: dict[str, Any]) -> DraftReply:
         """Draft a polite, professional reply based on the operational context."""
-        if not self.is_live_available():
+        if not self.is_live_available() or not self.live_drafts:
             return self._mock_draft(context)
 
         try:

@@ -57,7 +57,16 @@ Evaluated against a curated 50-example labelled benchmark (`evals/dataset.json`)
 | **Decision Accuracy** | **100.0%** | Proposed write, or safe no-op / human review, matches the label |
 | **Heuristic Draft Score** | **87.3%** | Rule-based tone, grounding, and injection-leak check (not an LLM judge) |
 
-Known offline failures (4): ambiguous wording without keywords ("Need time off next month") is classified `unknown` by the offline heuristic, and one role-play injection is classified as an invoice. All four still route safely to human review: unclassifiable mail and inputs matching prompt-injection patterns never get an automated write or reply. Run `python -m evals.runner` with `GEMINI_API_KEY` set to score the live model on the same dataset.
+Known offline failures (4): ambiguous wording without keywords ("Need time off next month") is classified `unknown` by the offline heuristic, and one role-play injection is classified as an invoice. All four still route safely to human review: unclassifiable mail and inputs matching prompt-injection patterns never get an automated write or reply. To score the live model on the same dataset, set `GEMINI_API_KEY` and run:
+
+```bash
+# Free tier (5 req/min, 20 req/day per model): throttle, use template drafts
+# (50 calls instead of ~85), and cache results so each day's run resumes
+# where the last one stopped. Takes ~3 daily runs.
+LLM_MAX_RPM=4 LLM_LIVE_DRAFTS=false python -m evals.runner --cache evals/live_cache.json
+```
+
+If a live call fails (quota or outage), the run stops at that case instead of scoring a heuristic fallback, so partial results are always genuinely live and clearly marked `PARTIAL`.
 
 ### Benchmark Comparison: Native Tool vs MCP Server
 `tools/mcp_server.py` exposes record lookups as an MCP tool over the stdio transport (JSON-RPC 2.0 with the `initialize` handshake, `tools/list`, `tools/call`). `tools/mcp_client.py` spawns it as a subprocess, so every MCP lookup crosses a real process and protocol boundary. Both paths share the same lookup backend, so the comparison isolates protocol cost:

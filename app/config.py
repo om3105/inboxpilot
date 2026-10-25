@@ -30,6 +30,10 @@ class Settings(BaseSettings):
         default=0,
         description="Max live LLM requests per minute (0 = unlimited; free tier is 5)",
     )
+    llm_live_drafts: bool = Field(
+        default=True,
+        description="Use the LLM for draft replies; false uses templates and halves LLM calls",
+    )
 
     # ── MongoDB ───────────────────────────────────────────────
     mongodb_uri: str = Field(
