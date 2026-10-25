@@ -23,7 +23,7 @@ class Settings(BaseSettings):
         default="", description="Google Gemini API key"
     )
     llm_model_name: str = Field(
-        default="gemini-2.0-flash",
+        default="gemini-3.5-flash",
         description="Model identifier passed to the LLM provider",
     )
 

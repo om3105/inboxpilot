@@ -24,7 +24,7 @@ import time
 from typing import Any
 
 from agent.graph import build_agent_graph
-from app.llm import LLMProvider
+from app.llm import FALLBACK_COUNTS, LLMProvider
 from app.models import RunStatus
 
 logger = logging.getLogger("inboxpilot.evals")
@@ -81,6 +81,8 @@ async def run_benchmark(
         cases = cases[:limit]
 
     mode = "live" if LLMProvider().is_live_available() else "offline"
+    for k in FALLBACK_COUNTS:
+        FALLBACK_COUNTS[k] = 0
     agent = build_agent_graph()
 
     total = len(cases)
@@ -170,6 +172,8 @@ async def run_benchmark(
         "decision_accuracy": _pct(action_matches, total),
         "heuristic_draft_score": avg_draft,
         "drafts_scored": len(draft_scores),
+        # Live calls that errored and silently used the offline heuristic instead
+        "llm_fallbacks": dict(FALLBACK_COUNTS),
         "failures": failures,
     }
 
@@ -192,6 +196,11 @@ def print_results_table(results: dict[str, Any]):
     print(f"| Field-Extraction Accuracy | {_fmt(results['field_extraction_accuracy']):<6} |")
     print(f"| Decision Accuracy         | {_fmt(results['decision_accuracy']):<6} |")
     print(f"| Heuristic Draft Score     | {_fmt(results['heuristic_draft_score']):<6} |")
+
+    fb = results["llm_fallbacks"]
+    if results["mode"] == "live":
+        print(f"\nLLM fallbacks to heuristic: {fb['extract']} extractions, {fb['draft']} drafts"
+              + (" (these cases were NOT scored on the live model)" if any(fb.values()) else ""))
 
     if results["failures"]:
         print(f"\nFailing cases ({len(results['failures'])}):")
