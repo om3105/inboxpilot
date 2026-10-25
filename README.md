@@ -1,243 +1,131 @@
-# InboxPilot: Email & Document Ops Agent
-
-> **Live Demo:** [inboxpilot-sxka.onrender.com](https://inboxpilot-sxka.onrender.com): open it and press **Run agent**, no sign-up or key needed | **Interactive Docs:** [/docs](https://inboxpilot-sxka.onrender.com/docs) | *Free tier: first request after idle takes ~30–60s*
+# InboxPilot
 
 [![CI & Evals](https://github.com/om3105/inboxpilot/actions/workflows/evals.yml/badge.svg)](https://github.com/om3105/inboxpilot/actions)
-[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
-[![LangGraph](https://img.shields.io/badge/LangGraph-1.2.14-orange.svg)](https://langchain-ai.github.io/langgraph/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.143.0-009688.svg)](https://fastapi.tiangolo.com)
-[![MongoDB Atlas](https://img.shields.io/badge/MongoDB_Atlas-Checkpointer-green.svg)](https://www.mongodb.com/atlas)
-[![Langfuse](https://img.shields.io/badge/Observability-Langfuse_v4-purple.svg)](https://langfuse.com)
 
-**InboxPilot** is an autonomous, human-in-the-loop Agentic AI operations system. It ingests inbound enterprise emails and documents (leave requests, invoices, support tickets), extracts typed Pydantic entities, performs verified cross-checks in MongoDB Atlas, drafts contextual replies, and proposes database mutations.
+**Try it:** [inboxpilot-sxka.onrender.com](https://inboxpilot-sxka.onrender.com). Pick an email and press **Run agent**. No sign-up or key needed. (It's on Render's free plan, so the first load after it's been idle takes 30 to 60 seconds.)
 
-Crucially, **any high-risk write action is gated behind a persistent human approval interrupt**. Paused threads are persisted in MongoDB Atlas using LangGraph checkpointing, allowing state to survive container redeployments and cloud cold restarts on Render.
+InboxPilot reads operations email (leave requests, vendor invoices, IT tickets), checks it against company records, and proposes the database change it thinks should happen. It also drafts a reply to the sender.
 
----
+The main rule: **it never writes anything on its own.** Every change stops at an approval step, and a person has to click Approve before the database is touched. Spam, unknown employees, and anything that looks like a prompt injection skip that step entirely and go straight to a person.
 
-## 🏛️ System Architecture
+Built with LangGraph, FastAPI, Pydantic, and MongoDB, with Gemini as the main model and NVIDIA's API as a fallback.
+
+## How it works
 
 ```mermaid
 graph TD
-    Inbound([Inbound Document / Email / PDF]) --> Classify[1. Classify & Extract: Gemini LLM + Pydantic]
-    Classify --> Lookup[2. Record Lookup: MongoDB Atlas / MCP]
-    Lookup --> Decide{3. Decision Engine}
-    
-    Decide -->|Unknown / Injection / Missing ID / Discrepancy| DeadLetter[Needs Human Review State]
-    Decide -->|Record Verified| Draft[4. Draft Response Generator]
-    
-    Draft --> Gate{5. Human Approval Gate: LangGraph interrupt}
-    
-    Gate -->|No Mutation Needed| Complete([Completed Run])
-    Gate -->|Mutation Required: Leave / Invoice / Ticket| Paused[Thread Paused & Checkpointed in MongoDB]
-    
-    Paused --> API[Human Decision via POST /runs/:id/approve or reject]
-    
-    API -->|Approved| Exec[6. Execute Mutation: apply_update]
-    API -->|Rejected| Reject[Mark State Rejected]
-    
-    Exec --> Complete
-    Reject --> Complete
-    DeadLetter --> Complete
+    A[Email or document] --> B[Parse and extract fields]
+    B --> C[Look up the matching record]
+    C --> D{Can it act safely?}
+    D -->|Unknown type, missing record, injection| R[Send to a person]
+    D -->|Record verified| E[Draft a reply]
+    E --> F{Change needed?}
+    F -->|No| Done([Done])
+    F -->|Yes| P[Pause and wait for approval]
+    P -->|Approve| W[Apply the change]
+    P -->|Reject| X[Nothing written]
 ```
 
----
+A few things that keep it honest:
 
-## 📊 Evaluation & Benchmark Results
+- **Pausing for approval is real.** LangGraph's `interrupt()` stops the run and saves its state, so a pending approval survives a restart when MongoDB is configured. Approve or reject later with `POST /runs/{id}/approve` or `/reject`.
+- **The model can't invent IDs.** If it extracts an employee ID, invoice number, or ticket ID that doesn't appear in the email, the ID is thrown away before any lookup.
+- **Injection attempts never reach a write.** Text like "ignore previous instructions" or `DROP TABLE` sends the run to a person with no change and no reply, even if the record lookup succeeded.
+- **Two models, then a fallback.** It tries Gemini, then NVIDIA (`nemotron-3-ultra`), then a simple rule-based extractor. If a provider hits its rate limit it's skipped for a while instead of being retried on every request.
 
-Evaluated against a curated 50-example labelled benchmark (`evals/dataset.json`) covering standard traffic, missing fields, ambiguous wording, out-of-range balances, irrelevant mail, and adversarial prompt-injection attempts. Every metric is scored strictly per case, and the runner prints each failing case with the reason.
+## Results
 
-**Offline mode** (deterministic heuristic extractor, no API key; this is what CI runs as a regression gate, not a measure of LLM quality):
+I tested it on 50 hand-labelled emails (`evals/dataset.json`): normal requests, missing fields, vague wording, over-balance leave, spam, and prompt-injection attempts. Each case is scored strictly and every failure is printed with the reason.
 
-| Metric | Score | What it checks |
-|:-------|:-----:|:---------------|
-| **Classification Accuracy** | **92.0%** | `document_type` matches the label |
-| **Tool-Selection Accuracy** | **100.0%** | Tool trace matches the expected sequence exactly |
-| **Field-Extraction Accuracy** | **100.0%** | Each labelled field (IDs, leave type, …) |
-| **Decision Accuracy** | **100.0%** | Proposed write, or safe no-op / human review, matches the label |
-| **Heuristic Draft Score** | **87.3%** | Rule-based tone, grounding, and injection-leak check (not an LLM judge) |
-
-Known offline failures (4): ambiguous wording without keywords ("Need time off next month") is classified `unknown` by the offline heuristic, and one role-play injection is classified as an invoice. All four still route safely to human review: unclassifiable mail and inputs matching prompt-injection patterns never get an automated write or reply.
-
-**Live mode** (real LLM calls, `nvidia/nemotron-3-ultra-550b-a55b` via the NVIDIA API catalog; all 50 cases answered live, 0 heuristic fallbacks; raw per-case results in `evals/live_cache.json`):
+**With a real model** (`nvidia/nemotron-3-ultra-550b-a55b`, all 50 cases answered by the model, raw results in `evals/live_cache.json`):
 
 | Metric | Score |
-|:-------|:-----:|
-| **Classification Accuracy** | **96.0%** |
-| **Tool-Selection Accuracy** | **100.0%** |
-| **Field-Extraction Accuracy** | **100.0%** |
-| **Decision Accuracy** | **100.0%** |
-| **Heuristic Draft Score** | **90.0%** |
+|---|---|
+| Classification | 96% |
+| Tool selection (exact step order) | 100% |
+| Field extraction | 100% |
+| Decision (right change, or correctly sent to a person) | 100% |
+| Reply quality (rule-based check, not an LLM judge) | 90% |
 
-Live failures (2): "Please send money for that service as discussed" is classified as an invoice (labelled `unknown`), and a SQL-injection email is classified `unknown` (labelled invoice). Both still route to human review. The grounding check discarded 5 hallucinated identifiers (e.g. `EMP-001` where the text had none) before they could reach a lookup.
+The two misses are both edge cases. "Please send money for that service as discussed" was read as an invoice, and a SQL-injection email was read as unknown. Both still ended up with a person.
 
-The first live run scored 66% classification / 74% decisions. The cause was ours, not the model's: with every schema field optional, the model omitted keys, which silently defaulted (`document_type` became `unknown`). The LLM now gets a schema where every field is required but nullable.
+**Offline** (no API key, rule-based extractor; this is what CI runs on every push): classification 92%, tool selection 100%, fields 100%, decisions 100%. The misses are vague requests like "Need time off next month", which the rule-based extractor can't classify. All of them still route safely to a person.
 
-To reproduce, set an API key and run:
+To rerun it yourself:
 
 ```bash
-# NVIDIA only (what the table above used)
 LLM_PROVIDERS=nvidia LLM_MAX_RPM=30 python -m evals.runner --cache evals/live_cache.json
-
-# Gemini free tier (5 req/min, 20 req/day per model): throttle, use template drafts,
-# and resume across days from the cache.
-LLM_PROVIDERS=gemini LLM_MAX_RPM=4 LLM_LIVE_DRAFTS=false python -m evals.runner --cache evals/live_cache.json
 ```
 
-If every provider fails on a case (quota or outage), the run stops there instead of scoring a heuristic fallback, so partial results are always genuinely live and clearly marked `PARTIAL`.
+On Gemini's free tier (5 requests a minute, 20 a day) the run stops when the quota runs out and picks up from the cache the next day. It never scores a fallback answer as if the model had produced it.
 
-### LLM provider fallback
-Calls try providers in `LLM_PROVIDERS` order (default `gemini,nvidia`), then the offline heuristic. Transient errors are retried; a rate-limited provider is skipped for a cooldown (1 hour after a daily-quota error) so later calls go straight to the next one.
+## What went wrong along the way
 
-### Benchmark Comparison: Native Tool vs MCP Server
-`tools/mcp_server.py` exposes record lookups as an MCP tool over the stdio transport (JSON-RPC 2.0 with the `initialize` handshake, `tools/list`, `tools/call`). `tools/mcp_client.py` spawns it as a subprocess, so every MCP lookup crosses a real process and protocol boundary. Both paths share the same lookup backend, so the comparison isolates protocol cost:
+The interesting bugs, since the numbers above weren't the first ones:
 
-| Metric (40 lookups) | Native (in-process) | MCP (stdio JSON-RPC) |
-|:--------------------|:-------------------:|:--------------------:|
-| **Result agreement** | baseline | **100%** |
-| **p50 latency / lookup** | ~25 ms | ~24 ms |
-| **One-time server startup** | none | ~170 ms |
+- **The first live run scored 66% on classification.** The model was extracting the right fields and then labelling the email "unknown". Every field in my schema was optional, so when the model skipped `document_type` it quietly defaulted to unknown. Making every field required (but allowed to be null) fixed it.
+- **Replies were cut off mid-sentence**, always at about 250 characters, but only on NVIDIA. Its JSON mode was closing the string early. Asking for the reply as plain text fixed it and made drafts 4 to 10 times faster.
+- **Free-tier limits.** Gemini's free tier allows 20 requests a day per model, which a 50-case eval blows through. That's where the throttle, the resumable eval cache, and the NVIDIA fallback came from.
+- **The model sometimes invents IDs.** For "Need time off next month" it once returned `EMP-4567`. That's why IDs now have to appear in the email text.
 
-Per-lookup latency is dominated by the backend (local run, Atlas unreachable, falling back to seed data), so the JSON-RPC round trip adds no measurable per-call overhead; the cost of MCP is the one-time process spawn and handshake.
+## Native tools vs MCP
 
----
+Record lookups are also available as an [MCP](https://modelcontextprotocol.io) server over stdio (`tools/mcp_server.py`), so other agent runtimes can use them. I benchmarked it against calling the same lookup in-process:
 
-## 📂 Repository Structure
+| 40 lookups | In-process | MCP over stdio |
+|---|---|---|
+| Same result | baseline | 100% |
+| Median per lookup | ~25 ms | ~24 ms |
+| One-time startup | none | ~170 ms |
 
-```text
-├── app/
-│   ├── config.py         # Type-safe settings via pydantic-settings
-│   ├── database.py       # Motor async connection pooling for FastAPI
-│   ├── llm.py            # Thin LLM provider (Gemini + offline fallback)
-│   ├── models.py         # Pydantic domain models & AgentState TypedDict
-│   ├── telemetry.py      # Langfuse v4 OpenTelemetry instrumentation
-│   └── main.py           # FastAPI routes, rate limiter, auth, & lifespan
-├── agent/
-│   ├── graph.py          # LangGraph state machine, interrupt() gate, routing
-│   └── checkpointer.py   # MongoDBSaver checkpointer factory with MemorySaver fallback
-├── tools/
-│   ├── read_email.py     # .eml / plain text parser
-│   ├── read_pdf.py       # PDF text extractor via pdfplumber
-│   ├── extract_fields.py # LLM extraction with exponential backoff
-│   ├── lookup_record.py  # MongoDB Atlas read queries
-│   ├── draft_reply.py    # LLM operational response drafter
-│   ├── apply_update.py   # High-risk write tool (requires human sign-off)
-│   ├── mcp_server.py     # MCP stdio server (JSON-RPC 2.0)
-│   └── mcp_client.py     # MCP stdio client (spawns the server)
-├── evals/
-│   ├── dataset.json      # 50 labelled examples & edge cases
-│   ├── runner.py         # Strict per-case scoring + failure report
-│   └── compare_mcp.py    # Native DB vs MCP comparative benchmark
-├── tests/
-│   ├── test_models.py    # Domain model validation & serialization tests
-│   ├── test_tools.py     # Unit tests for all 6 tools
-│   ├── test_agent.py     # LangGraph workflow, pause, & resume tests
-│   ├── test_api.py       # FastAPI endpoint & auth header integration tests
-│   └── test_evals.py     # Pytest regression suite enforcing metric thresholds
-├── samples/              # Preloaded sample files (.eml, .txt)
-├── scripts/
-│   ├── seed_db.py        # Idempotent MongoDB seeder (30 mock business records)
-│   └── generate_eval_dataset.py # Eval dataset generation script
-├── docs/
-│   └── demo_video_script.md # 2-minute portfolio video script
-├── Dockerfile            # Production multi-stage Docker container
-├── render.yaml           # Infrastructure-as-code for Render deployment
-└── requirements.txt      # Strictly pinned dependencies
-```
+The lookup itself dominates, so the protocol adds nothing noticeable per call. The real cost is starting the server process once.
 
----
+## Running it locally
 
-## 🛠️ Quickstart & Local Setup
-
-### 1. Clone & Set Up Virtual Environment
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-```
-
-### 2. Configure Environment Secrets
-```bash
 cp .env.example .env
 ```
-Populate `.env` with your keys:
-- `GEMINI_API_KEY`: Google Gemini API key (or leave blank to use the deterministic offline mock provider)
-- `MONGODB_URI`: MongoDB Atlas connection string
-- `DEMO_TOKEN`: Any random secret string; agent endpoints return 503 if it is unset
-- `LANGFUSE_PUBLIC_KEY` & `LANGFUSE_SECRET_KEY`: (Optional) Langfuse credentials
 
-### 3. Seed Mock Enterprise Data
-Loads 30 realistic mock documents into `employees`, `invoices`, and `tickets` with unique indexes:
+Everything in `.env` is optional. With no keys it runs fully offline on the rule-based extractor.
+
+- `GEMINI_API_KEY` and/or `NVIDIA_API_KEY` to use real models
+- `MONGODB_URI` for persistent records and approvals (without it, everything stays in memory)
+- `DEMO_TOKEN` to require an access key, or `DEMO_PUBLIC=true` to skip it (see below)
+
 ```bash
-python -m scripts.seed_db
+python -m scripts.seed_db            # load 30 sample records into MongoDB (optional)
+uvicorn app.main:app --reload        # dashboard at http://localhost:8000, API docs at /docs
+pytest tests/                        # 68 tests
+python -m evals.runner               # 50-case eval (offline unless a key is set)
+python -m evals.compare_mcp          # native vs MCP benchmark
 ```
 
-### 4. Run Test Suite & Benchmark
-```bash
-# Run all unit and integration tests
-pytest tests/ -v
+## Deploying
 
-# Run 50-case benchmark evaluation
-python -m evals.runner
+`render.yaml` is a Render Blueprint. In Render, choose **New → Blueprint**, pick this repo, and paste the keys it asks for. Pushes to `main` redeploy automatically.
 
-# Run MCP comparative benchmark
-python -m evals.compare_mcp
+The live demo runs with `DEMO_PUBLIC=true`. That means no access key is needed, and lookups, approvals, and run state all stay in an in-memory copy of the sample data, so visitors can't change a real database. Set it to `false` to require `DEMO_TOKEN` and use MongoDB. Rate limits (15 runs a minute per visitor) apply either way.
+
+If you use MongoDB Atlas with Render's free plan, allow access from `0.0.0.0/0` in Atlas, because Render's outbound IPs change.
+
+## Project layout
+
+```text
+agent/      LangGraph workflow (graph.py) and checkpointer setup
+app/        FastAPI app, dashboard, settings, LLM providers, tracing
+tools/      email/PDF parsing, extraction, lookup, drafting, apply_update, MCP server + client
+evals/      dataset, scoring runner, MCP benchmark, cached live results
+tests/      68 tests: agent flow, API, demo mode, LLM fallback, MCP, evals
+samples/    the example emails shown in the demo inbox
+scripts/    MongoDB seeding and eval dataset generation
 ```
 
-### 5. Launch Local API Server
-```bash
-uvicorn app.main:app --reload --port 8000
-```
-Visit Swagger UI at: `http://localhost:8000/docs`.
+## Limitations
 
----
-
-## 🚢 Render Deployment Guide
-
-### Deployment Configuration
-The repository includes `render.yaml` and a `Dockerfile`.
-
-1. **Deploy the Blueprint:**
-   - In Render, choose **New → Blueprint** and select this repository; `render.yaml` defines the web service.
-   - Render prompts for the secret values (`GEMINI_API_KEY`, `NVIDIA_API_KEY`, `MONGODB_URI`, Langfuse keys) and generates a random `DEMO_TOKEN`.
-   - Every push to `main` redeploys automatically.
-
-2. **MongoDB Atlas Network Access (Critical):**
-   - In MongoDB Atlas, navigate to **Network Access** → **IP Access List**.
-   - Click **Add IP Address** → Choose **Allow Access from Anywhere (`0.0.0.0/0`)** because Render assigns dynamic outbound IP addresses on free and starter tiers.
-
-3. **Environment Variables** (set by the Blueprint; edit under the service's **Environment** tab):
-   - `GEMINI_API_KEY`, `NVIDIA_API_KEY`: LLM providers, tried in `LLM_PROVIDERS` order (`gemini,nvidia`)
-   - `LLM_MODEL_NAME` = `gemini-3.5-flash`, `NVIDIA_MODEL_NAME` = `nvidia/nemotron-3-ultra-550b-a55b`
-   - `MONGODB_URI`, `MONGODB_DB_NAME` = `inboxpilot` (without a URI, checkpoints are kept in memory)
-   - `DEMO_PUBLIC` = `true`: public demo mode. No access key is needed, and lookups, approvals, and run state stay in an in-memory sandbox, so visitors can never change the real database. Set it to `false` to require `DEMO_TOKEN` and use MongoDB.
-   - `DEMO_TOKEN`: generated by Render; required for agent endpoints when `DEMO_PUBLIC` is off
-   - `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` (optional; `https://us.cloud.langfuse.com` for US-region projects)
-
-> **Note on Render Free Tier Cold Starts:** Free tier services spin down after 15 minutes of inactivity. The initial request may take ~45–50 seconds to warm up the container. Subsequent requests execute in < 400ms.
-
-### Post-Deploy Verification Checklist
-- [ ] Call `GET /health` → returns `{"status": "healthy"}`.
-- [ ] Call `GET /samples` → returns preloaded mock documents.
-- [ ] Call `POST /process` with header `X-Demo-Token` → confirms agent extracts fields and returns `status: "awaiting_approval"`, `requires_approval: true`.
-- [ ] Call `POST /runs/{run_id}/approve` → confirms LangGraph thread resumes and mutates the database.
-- [ ] Check Langfuse Dashboard → confirms trace arrived with token usage and latency.
-
----
-
-## 💡 Key Design Decisions & Interview Explanations
-
-1. **Why LangGraph for Agent Orchestration?**
-   * *Interview Answer:* Autonomous enterprise ops require deterministic state boundaries and human oversight. ReAct loops often suffer from non-deterministic looping or accidental writes. LangGraph provides an explicit cyclic state machine with first-class state checkpointing and native `interrupt()` points that pause execution without blocking web worker threads.
-2. **Why MongoDB Atlas for Checkpointing?**
-   * *Interview Answer:* Platforms like Render have ephemeral filesystems—any in-memory or SQLite checkpointer is wiped when a container restarts or deploys. Storing LangGraph checkpoints in MongoDB Atlas ensures that human-in-the-loop approval threads survive container crashes, restarts, and redeployments.
-3. **How does the system prevent Hallucinated Actions & Injections?**
-   * *Interview Answer:* We employ strict Pydantic models for domain outputs. If an extraction fails schema constraints or an adversarial prompt injection is detected, the agent routes to a `needs_human_review` fallback state. Furthermore, high-risk tools cannot execute autonomously; they require an explicit cryptographic or authenticated approval command via the API.
-4. **Why Model Context Protocol (MCP)?**
-   * *Interview Answer:* MCP decouples internal database logic from the AI agent. Instead of hardcoding proprietary database clients into agent nodes, exposing tools via MCP JSON-RPC allows any external agent runtime to safely interact with our enterprise data under standardized capability schemas.
-
----
-
-## ⚠️ Known Limitations
-1. **Scanned PDF Documents:** The current parser uses `pdfplumber`, which extracts programmatic digital text. Scanned raster image PDFs require an upstream OCR engine (e.g. Tesseract or Google Cloud Document AI).
-2. **Free-Tier Host Latency:** Render free-tier instances sleep when idle. Cold boots incur a 45–50s delay on first invocation.
+- Scanned PDFs need OCR first. The parser only reads PDFs that already contain text.
+- Leave days are counted as calendar days, not working days.
+- The reply-quality score is a rule-based check (greeting, references the right ID, no leaked injection text), not a judgment of how good the writing is.
+- Tracing to Langfuse is built in (`app/telemetry.py`) but off unless you add Langfuse keys.
