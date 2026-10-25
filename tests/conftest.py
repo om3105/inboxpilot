@@ -6,6 +6,7 @@ from tools.lookup_record import reset_mock_store
 # Env vars take precedence over .env in pydantic-settings; keep tests offline,
 # deterministic, and from exporting traces to the real Langfuse project.
 os.environ["GEMINI_API_KEY"] = ""
+os.environ["NVIDIA_API_KEY"] = ""
 os.environ["LANGFUSE_PUBLIC_KEY"] = ""
 os.environ["LANGFUSE_SECRET_KEY"] = ""
 os.environ["DEMO_TOKEN"] = "test-demo-token"

@@ -15,6 +15,12 @@ services:
         sync: false
       - key: LLM_MODEL_NAME
         value: gemini-3.5-flash
+      - key: NVIDIA_API_KEY
+        sync: false
+      - key: NVIDIA_MODEL_NAME
+        value: nvidia/nemotron-3-ultra-550b-a55b
+      - key: LLM_PROVIDERS
+        value: gemini,nvidia
       - key: MONGODB_URI
         sync: false
       - key: MONGODB_DB_NAME

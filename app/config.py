@@ -26,6 +26,15 @@ class Settings(BaseSettings):
         default="gemini-3.5-flash",
         description="Model identifier passed to the LLM provider",
     )
+    nvidia_api_key: str = Field(default="", description="NVIDIA API catalog key (nvapi-...)")
+    nvidia_model_name: str = Field(
+        default="nvidia/nemotron-3-ultra-550b-a55b",
+        description="Model on integrate.api.nvidia.com used when NVIDIA is in the provider chain",
+    )
+    llm_providers: str = Field(
+        default="gemini,nvidia",
+        description="Comma-separated provider fallback order; providers without a key are skipped",
+    )
     llm_max_rpm: int = Field(
         default=0,
         description="Max live LLM requests per minute (0 = unlimited; free tier is 5)",
